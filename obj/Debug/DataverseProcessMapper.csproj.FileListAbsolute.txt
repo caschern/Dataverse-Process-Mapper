@@ -1,0 +1,17 @@
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\bin\Debug\runtimes\win-x86\native\WebView2Loader.dll
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\bin\Debug\runtimes\win-x64\native\WebView2Loader.dll
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\bin\Debug\runtimes\win-arm64\native\WebView2Loader.dll
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\bin\Debug\DataverseProcessMapper.dll
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\bin\Debug\DataverseProcessMapper.pdb
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\bin\Debug\PdfSharp.Charting.dll
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\bin\Debug\PdfSharp.dll
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\bin\Debug\de\PdfSharp.Charting.resources.dll
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\bin\Debug\de\PdfSharp.resources.dll
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\obj\Debug\DataverseProcessMapper.csproj.AssemblyReference.cache
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\obj\Debug\DataverseProcessMapper.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\obj\Debug\DataverseProcessMapper.AssemblyInfoInputs.cache
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\obj\Debug\DataverseProcessMapper.AssemblyInfo.cs
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\obj\Debug\DataverseProcessMapper.csproj.CoreCompileInputs.cache
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\obj\Debug\Datavers.80F27B93.Up2Date
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\obj\Debug\DataverseProcessMapper.dll
+C:\Users\CristianHernandez\jsScripts\DataverseProcessMapper\obj\Debug\DataverseProcessMapper.pdb

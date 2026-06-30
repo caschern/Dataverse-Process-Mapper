@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <!--
+      The Tool Library discovers packages by the REQUIRED "XrmToolBox" tag.
+      The package id should be unique and is conventionally prefixed with your
+      own handle (e.g. CasasHern.*) to avoid collisions on nuget.org.
+    -->
+    <id>CasasHern.DataverseProcessMapper</id>
+    <version>1.0.0</version>
+    <title>Dataverse Process Mapper</title>
+
+    <!-- This is the PUBLISHER NAME shown in the XrmToolBox Tool Library. -->
+    <authors>Cristian Casas</authors>
+    <owners>Cristian Casas</owners>
+
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <license type="expression">MIT</license>
+    <projectUrl>https://github.com/your-github-user/DataverseProcessMapper</projectUrl>
+
+    <!-- This is the ICON shown in the Tool Library listing (embedded PNG, 128x128). -->
+    <icon>images\icon.png</icon>
+
+    <description>List Classic Workflows and Power Automate flows from the Dataverse workflow table and render visual process maps (XAML for workflows, JSON for flows), exportable to PDF or HTML.</description>
+    <releaseNotes>Initial release: two-tab UI for Power Automate flows and classic workflows, GDI+ process maps, PDF and HTML export.</releaseNotes>
+    <copyright>Copyright (c) Cristian Casas</copyright>
+
+    <!-- "XrmToolBox" is mandatory for discovery; the rest aid search. -->
+    <tags>XrmToolBox Dataverse Dynamics365 PowerAutomate Workflow ProcessMap Diagram</tags>
+  </metadata>
+
+  <files>
+    <!--
+      Ship ONLY your plugin and its non-host dependency (PdfSharp), at the
+      package root (target=""). Do NOT include XrmToolBox / CRM SDK / Newtonsoft
+      assemblies — the host provides them and including them fails validation.
+    -->
+    <file src="bin\Release\DataverseProcessMapper.dll" target="" />
+    <file src="bin\Release\PdfSharp.dll" target="" />
+    <file src="images\icon.png" target="images\" />
+  </files>
+</package>
