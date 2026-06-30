@@ -30,6 +30,6 @@ namespace DataverseProcessMapper
 
         // IGitHubPlugin — surfaces an "Update" / help link in XrmToolBox.
         public string RepositoryName => "DataverseProcessMapper";
-        public string UserName => "your-github-user";
+        public string UserName => "caschern";
     }
 }
