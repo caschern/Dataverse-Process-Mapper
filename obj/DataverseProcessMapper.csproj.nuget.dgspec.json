@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\CristianHernandez\\jsScripts\\DataverseProcessMapper\\DataverseProcessMapper.csproj": {}
+    "C:\\Users\\CristianHernandez\\source\\repos\\caschern\\Dataverse-Process-Mapper\\DataverseProcessMapper.csproj": {}
   },
   "projects": {
-    "C:\\Users\\CristianHernandez\\jsScripts\\DataverseProcessMapper\\DataverseProcessMapper.csproj": {
+    "C:\\Users\\CristianHernandez\\source\\repos\\caschern\\Dataverse-Process-Mapper\\DataverseProcessMapper.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\CristianHernandez\\jsScripts\\DataverseProcessMapper\\DataverseProcessMapper.csproj",
+        "projectUniqueName": "C:\\Users\\CristianHernandez\\source\\repos\\caschern\\Dataverse-Process-Mapper\\DataverseProcessMapper.csproj",
         "projectName": "DataverseProcessMapper",
-        "projectPath": "C:\\Users\\CristianHernandez\\jsScripts\\DataverseProcessMapper\\DataverseProcessMapper.csproj",
+        "projectPath": "C:\\Users\\CristianHernandez\\source\\repos\\caschern\\Dataverse-Process-Mapper\\DataverseProcessMapper.csproj",
         "packagesPath": "C:\\Users\\CristianHernandez\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\CristianHernandez\\jsScripts\\DataverseProcessMapper\\obj\\",
+        "outputPath": "C:\\Users\\CristianHernandez\\source\\repos\\caschern\\Dataverse-Process-Mapper\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
