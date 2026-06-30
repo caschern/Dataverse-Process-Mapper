@@ -16,7 +16,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyDescriptionAttribute("List Classic Workflows and Power Automate flows from Dataverse and render visual " +
     "process maps, exportable to PDF or HTML.")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+d3fbaddbfc39be7ceb33b41cabc074b0840b09d2")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+d3f0b42571daa13384dbb4a600e8a917a065ea4b")]
 [assembly: System.Reflection.AssemblyProductAttribute("Dataverse Process Mapper")]
 [assembly: System.Reflection.AssemblyTitleAttribute("DataverseProcessMapper")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
