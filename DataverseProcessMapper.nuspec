@@ -1,47 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
   <metadata>
-    <!--
-      The Tool Library discovers packages by the REQUIRED "XrmToolBox" tag.
-      The package id should be unique and is conventionally prefixed with your
-      own handle (e.g. CasasHern.*) to avoid collisions on nuget.org.
-    -->
     <id>CasasHern.DataverseProcessMapper</id>
-    <version>1.0.1</version>
+    <version>1.0.11</version>
     <title>Dataverse Process Mapper</title>
-
-    <!-- This is the PUBLISHER NAME shown in the XrmToolBox Tool Library. -->
     <authors>Cristian Casas</authors>
     <owners>Cristian Casas</owners>
-
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <license type="expression">MIT</license>
     <projectUrl>https://github.com/caschern/Dataverse-Process-Mapper</projectUrl>
-
-    <!--
-      The XrmToolBox portal validates the logo via iconUrl (a public image URL),
-      while nuget.org uses the embedded <icon>. Keep BOTH.
-      The iconUrl must resolve publicly (repo must be public + icon.png pushed).
-    -->
-    <icon>images\icon.png</icon>
     <iconUrl>https://raw.githubusercontent.com/caschern/Dataverse-Process-Mapper/main/images/icon.png</iconUrl>
-
     <description>List Classic Workflows and Power Automate flows from the Dataverse workflow table and render visual process maps (XAML for workflows, JSON for flows), exportable to PDF or HTML.</description>
-    <releaseNotes>1.0.1: Add public iconUrl for the XrmToolBox portal logo. 1.0.0: Initial release — two-tab UI for Power Automate flows and classic workflows, GDI+ process maps, PDF and HTML export.</releaseNotes>
+    <releaseNotes></releaseNotes>
     <copyright>Copyright (c) Cristian Casas</copyright>
-
-    <!-- "XrmToolBox" is mandatory for discovery; the rest aid search. -->
     <tags>XrmToolBox Dataverse Dynamics365 PowerAutomate Workflow ProcessMap Diagram</tags>
+    <dependencies>
+      <dependency id="XrmToolBox" version="1.2025.10.74" />
+    </dependencies>
   </metadata>
 
   <files>
-    <!--
-      Ship ONLY your plugin and its non-host dependency (PdfSharp), at the
-      package root (target=""). Do NOT include XrmToolBox / CRM SDK / Newtonsoft
-      assemblies — the host provides them and including them fails validation.
-    -->
-    <file src="bin\Release\DataverseProcessMapper.dll" target="" />
-    <file src="bin\Release\PdfSharp.dll" target="" />
-    <file src="images\icon.png" target="images\" />
+    <file src="bin\Release\DataverseProcessMapper.dll" target="lib\net48\Plugins" />
+    <file src="bin\Release\PdfSharp.dll"               target="lib\net48\Plugins" />
   </files>
 </package>
