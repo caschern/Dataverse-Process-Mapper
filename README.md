@@ -28,7 +28,7 @@ Lists **Classic Workflows** and **Power Automate flows** from the Dataverse
 ## Build
 
 Requirements: Visual Studio 2022 (or `dotnet` SDK + MSBuild) with the
-.NET Framework 4.6.2 targeting pack.
+.NET Framework 4.8 targeting pack.
 
 ```powershell
 dotnet restore

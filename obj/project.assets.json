@@ -1,7 +1,7 @@
 {
-  "version": 3,
+  "version": 4,
   "targets": {
-    ".NETFramework,Version=v4.8": {
+    "net48": {
       "DockPanelSuite/3.0.6": {
         "type": "package",
         "compile": {
@@ -3133,7 +3133,7 @@
     }
   },
   "projectFileDependencyGroups": {
-    ".NETFramework,Version=v4.8": [
+    "net48": [
       "Microsoft.CrmSdk.XrmTooling.CoreAssembly >= 9.1.*",
       "Newtonsoft.Json >= 13.*",
       "PdfSharp >= 1.50.*",
@@ -3145,7 +3145,7 @@
     "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
   },
   "project": {
-    "version": "1.0.0",
+    "version": "1.0.11",
     "restore": {
       "projectUniqueName": "C:\\Users\\CristianHernandez\\source\\repos\\caschern\\Dataverse-Process-Mapper\\DataverseProcessMapper.csproj",
       "projectName": "DataverseProcessMapper",
@@ -3186,7 +3186,7 @@
         "auditLevel": "low",
         "auditMode": "direct"
       },
-      "SdkAnalysisLevel": "10.0.200"
+      "SdkAnalysisLevel": "10.0.300"
     },
     "frameworks": {
       "net48": {
@@ -3213,7 +3213,7 @@
             "version": "[1.*, )"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.203\\RuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.301\\RuntimeIdentifierGraph.json"
       }
     }
   }
