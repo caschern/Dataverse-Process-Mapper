@@ -2,16 +2,16 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
   <metadata>
     <id>CasasHern.DataverseProcessMapper</id>
-    <version>1.0.11</version>
+    <version>1.0.17</version>
     <title>Dataverse Process Mapper</title>
     <authors>Cristian Casas</authors>
     <owners>Cristian Casas</owners>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <license type="expression">MIT</license>
     <projectUrl>https://github.com/caschern/Dataverse-Process-Mapper</projectUrl>
     <iconUrl>https://raw.githubusercontent.com/caschern/Dataverse-Process-Mapper/main/images/icon.png</iconUrl>
-    <description>List Classic Workflows and Power Automate flows from the Dataverse workflow table and render visual process maps (XAML for workflows, JSON for flows), exportable to PDF or HTML.</description>
-    <releaseNotes></releaseNotes>
+    <description>List Classic Workflows and Power Automate flows from the Dataverse workflow table and render visual process maps (XAML for workflows, JSON for flows), exportable to PDF, HTML or SVG (Visio/Mural compatible).</description>
+    <summary>List Classic Workflows and Power Automate flows from Dataverse and render visual process maps, exportable to PDF, HTML or SVG.</summary>
+    <releaseNotes>1.0.17: Orthogonal connectors with lane separation and readable branch labels, fit-to-width auto-scaling preview, SVG export (Visio/Mural compatible), name filter boxes, flow list shows Created On/Created By/Modified By/Owner/Scope. 1.0.15: Add summary and release notes, remove SPDX license element for Tool Library compatibility. 1.0.0: Initial release - two-tab UI for Power Automate flows and classic workflows, GDI+ process maps, PDF and HTML export.</releaseNotes>
     <copyright>Copyright (c) Cristian Casas</copyright>
     <tags>XrmToolBox Dataverse Dynamics365 PowerAutomate Workflow ProcessMap Diagram</tags>
     <dependencies>
@@ -21,6 +21,6 @@
 
   <files>
     <file src="bin\Release\DataverseProcessMapper.dll" target="lib\net48\Plugins" />
-    <file src="bin\Release\PdfSharp.dll"               target="lib\net48\Plugins" />
+    <file src="bin\Release\PdfSharp.dll"               target="lib\net48\Plugins\DataverseProcessMapper" />
   </files>
 </package>
