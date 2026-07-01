@@ -7,7 +7,7 @@
       own handle (e.g. CasasHern.*) to avoid collisions on nuget.org.
     -->
     <id>CasasHern.DataverseProcessMapper</id>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <title>Dataverse Process Mapper</title>
 
     <!-- This is the PUBLISHER NAME shown in the XrmToolBox Tool Library. -->
@@ -16,13 +16,18 @@
 
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <license type="expression">MIT</license>
-    <projectUrl>https://github.com/your-github-user/DataverseProcessMapper</projectUrl>
+    <projectUrl>https://github.com/caschern/Dataverse-Process-Mapper</projectUrl>
 
-    <!-- This is the ICON shown in the Tool Library listing (embedded PNG, 128x128). -->
+    <!--
+      The XrmToolBox portal validates the logo via iconUrl (a public image URL),
+      while nuget.org uses the embedded <icon>. Keep BOTH.
+      The iconUrl must resolve publicly (repo must be public + icon.png pushed).
+    -->
     <icon>images\icon.png</icon>
+    <iconUrl>https://raw.githubusercontent.com/caschern/Dataverse-Process-Mapper/main/images/icon.png</iconUrl>
 
     <description>List Classic Workflows and Power Automate flows from the Dataverse workflow table and render visual process maps (XAML for workflows, JSON for flows), exportable to PDF or HTML.</description>
-    <releaseNotes>Initial release: two-tab UI for Power Automate flows and classic workflows, GDI+ process maps, PDF and HTML export.</releaseNotes>
+    <releaseNotes>1.0.1: Add public iconUrl for the XrmToolBox portal logo. 1.0.0: Initial release — two-tab UI for Power Automate flows and classic workflows, GDI+ process maps, PDF and HTML export.</releaseNotes>
     <copyright>Copyright (c) Cristian Casas</copyright>
 
     <!-- "XrmToolBox" is mandatory for discovery; the rest aid search. -->
