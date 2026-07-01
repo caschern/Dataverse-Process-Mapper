@@ -3145,7 +3145,7 @@
     "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
   },
   "project": {
-    "version": "1.0.11",
+    "version": "1.0.17",
     "restore": {
       "projectUniqueName": "C:\\Users\\CristianHernandez\\source\\repos\\caschern\\Dataverse-Process-Mapper\\DataverseProcessMapper.csproj",
       "projectName": "DataverseProcessMapper",

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using DataverseProcessMapper.Models;
@@ -16,11 +17,82 @@ namespace DataverseProcessMapper.Rendering
         {
             DrawTitle(surface, graph, canvas);
 
+            var lanes = AssignEdgeLanes(graph);
+            var labels = new List<EdgeLabel>();
             foreach (var edge in graph.Edges)
-                DrawEdge(surface, graph, edge);
+                DrawEdge(surface, graph, edge, lanes.TryGetValue(edge, out var off) ? off : 0f, labels);
 
             foreach (var node in graph.Nodes)
                 DrawNode(surface, node);
+
+            // If two label chips collide, push the later one below the earlier.
+            for (int i = 1; i < labels.Count; i++)
+            {
+                for (int j = 0; j < i; j++)
+                {
+                    if (labels[i].Backing.IntersectsWith(labels[j].Backing))
+                    {
+                        var moved = labels[i];
+                        moved.Backing.Y = labels[j].Backing.Bottom + 2f;
+                        labels[i] = moved;
+                    }
+                }
+            }
+
+            // Labels go last so no connector line can cross their text.
+            foreach (var label in labels)
+            {
+                surface.FillRoundedRect(Color.White, label.Backing, 3f);
+                surface.DrawString(label.Text, DiagramStyle.EdgeLabelFont, DiagramStyle.EdgeLabelColor,
+                    label.Backing.X + 3f, label.Backing.Y + 1f);
+            }
+        }
+
+        private struct EdgeLabel
+        {
+            public string Text;
+            public RectangleF Backing;
+        }
+
+        /// <summary>
+        /// Spreads the horizontal runs of orthogonal edges that share the same
+        /// inter-rank gap onto separate "lanes" so they don't overlap.
+        /// Returns a vertical offset (from the gap's midline) per edge.
+        /// </summary>
+        private static Dictionary<ProcessEdge, float> AssignEdgeLanes(ProcessGraph graph)
+        {
+            const float laneSpacing = 8f;
+            float maxOffset = DiagramStyle.VerticalGap / 2f - 8f;
+
+            var result = new Dictionary<ProcessEdge, float>();
+
+            var jogging = graph.Edges
+                .Where(e => !e.IsBack)
+                .Select(e => new { Edge = e, From = graph[e.FromId], To = graph[e.ToId] })
+                .Where(x => x.From != null && x.To != null)
+                .Select(x => new
+                {
+                    x.Edge,
+                    StartX = x.From.Bounds.X + x.From.Bounds.Width / 2f,
+                    EndX = x.To.Bounds.X + x.To.Bounds.Width / 2f,
+                    MidY = (x.From.Bounds.Bottom + x.To.Bounds.Y) / 2f
+                })
+                .Where(x => Math.Abs(x.StartX - x.EndX) >= 0.5f); // straight drops need no lane
+
+            // Edges whose horizontal run lands in the same gap collide; group them.
+            foreach (var group in jogging.GroupBy(x => (int)Math.Round(x.MidY / 4f)))
+            {
+                var list = group.OrderBy(x => Math.Min(x.StartX, x.EndX)).ToList();
+                for (int i = 0; i < list.Count; i++)
+                {
+                    float offset = (i - (list.Count - 1) / 2f) * laneSpacing;
+                    if (offset > maxOffset) offset = maxOffset;
+                    if (offset < -maxOffset) offset = -maxOffset;
+                    result[list[i].Edge] = offset;
+                }
+            }
+
+            return result;
         }
 
         private static void DrawTitle(IDiagramSurface s, ProcessGraph graph, SizeF canvas)
@@ -109,7 +181,8 @@ namespace DataverseProcessMapper.Rendering
 
         // ---------- edges ----------
 
-        private static void DrawEdge(IDiagramSurface s, ProcessGraph graph, ProcessEdge edge)
+        private static void DrawEdge(IDiagramSurface s, ProcessGraph graph, ProcessEdge edge, float laneOffset,
+            List<EdgeLabel> labels)
         {
             var from = graph[edge.FromId];
             var to = graph[edge.ToId];
@@ -136,7 +209,25 @@ namespace DataverseProcessMapper.Rendering
             {
                 start = new PointF(from.Bounds.X + from.Bounds.Width / 2f, from.Bounds.Bottom);
                 end = new PointF(to.Bounds.X + to.Bounds.Width / 2f, to.Bounds.Y);
-                path = new[] { start, end };
+
+                if (Math.Abs(start.X - end.X) < 0.5f)
+                {
+                    // Vertically aligned: a single straight drop.
+                    path = new[] { start, end };
+                }
+                else
+                {
+                    // Orthogonal V-H-V route: drop to a midpoint, run across, drop in.
+                    // The lane offset spreads parallel runs in the same gap apart.
+                    float midY = (start.Y + end.Y) / 2f + laneOffset;
+                    path = new[]
+                    {
+                        start,
+                        new PointF(start.X, midY),
+                        new PointF(end.X, midY),
+                        end
+                    };
+                }
             }
 
             for (int i = 0; i < path.Length - 1; i++)
@@ -147,11 +238,23 @@ namespace DataverseProcessMapper.Rendering
 
             if (!string.IsNullOrEmpty(edge.Label))
             {
-                var mid = new PointF((start.X + end.X) / 2f, (start.Y + end.Y) / 2f);
+                // Anchor the label to the middle segment of the path (the horizontal
+                // run on orthogonal routes) so it sits on the connector.
+                int seg = (path.Length - 1) / 2;
+                var mid = new PointF(
+                    (path[seg].X + path[seg + 1].X) / 2f,
+                    (path[seg].Y + path[seg + 1].Y) / 2f);
                 var size = s.MeasureString(edge.Label, DiagramStyle.EdgeLabelFont);
-                // Small white-ish backing isn't available; just offset the text slightly.
-                s.DrawString(edge.Label, DiagramStyle.EdgeLabelFont, DiagramStyle.EdgeLabelColor,
-                    mid.X + 4, mid.Y - size.Height / 2f);
+
+                // Centered on the connector; queued and drawn after all edges
+                // (with a white backing chip) so no line crosses the text.
+                float lx = mid.X - size.Width / 2f;
+                float ly = mid.Y - size.Height / 2f;
+                labels.Add(new EdgeLabel
+                {
+                    Text = edge.Label,
+                    Backing = new RectangleF(lx - 3f, ly - 1f, size.Width + 6f, size.Height + 2f)
+                });
             }
         }
 

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!--
     XrmToolBox plugin (WinForms class library, .NET Framework 4.8).
@@ -23,8 +23,8 @@
     <Company>Cristian Casas</Company>
     <Authors>Cristian Casas</Authors>
     <Product>Dataverse Process Mapper</Product>
-    <Version>1.0.11</Version>
-    <Description>List Classic Workflows and Power Automate flows from Dataverse and render visual process maps, exportable to PDF or HTML.</Description>
+    <Version>1.0.17</Version>
+    <Description>List Classic Workflows and Power Automate flows from Dataverse and render visual process maps, exportable to PDF, HTML or SVG.</Description>
   </PropertyGroup>
 
   <ItemGroup>

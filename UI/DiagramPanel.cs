@@ -12,6 +12,8 @@ namespace DataverseProcessMapper.UI
     {
         private ProcessMap _map;
         private float _zoom = 1f;
+        private bool _autoFit = true;   // re-fit on resize until the user zooms manually
+        private bool _fitting;          // guards against resize/scrollbar feedback loops
 
         public DiagramPanel()
         {
@@ -35,7 +37,8 @@ namespace DataverseProcessMapper.UI
         {
             _map = map;
             AutoScrollPosition = new Point(0, 0);
-            UpdateScrollSize();
+            if (_autoFit) FitCore();
+            else UpdateScrollSize();
             Invalidate();
         }
 
@@ -43,10 +46,35 @@ namespace DataverseProcessMapper.UI
 
         public void ZoomToFit()
         {
+            _autoFit = true;
+            FitCore();
+        }
+
+        private void FitCore()
+        {
             if (_map == null || _map.CanvasSize.Width < 1) { Zoom = 1f; return; }
-            float fx = (ClientSize.Width - 20) / _map.CanvasSize.Width;
-            float fy = (ClientSize.Height - 20) / _map.CanvasSize.Height;
-            Zoom = System.Math.Min(System.Math.Min(fx, fy), 1f);
+            if (ClientSize.Width < 40 || ClientSize.Height < 40) return;
+
+            _fitting = true;
+            try
+            {
+                // Fit to width; the panel scrolls vertically for the rest.
+                float fx = (ClientSize.Width - 20) / _map.CanvasSize.Width;
+                Zoom = System.Math.Min(fx, 1f);
+            }
+            finally
+            {
+                _fitting = false;
+            }
+        }
+
+        protected override void OnResize(System.EventArgs e)
+        {
+            base.OnResize(e);
+            // Keep the diagram fitted while the user drags the splitter or
+            // resizes the window, unless they have zoomed manually.
+            if (_autoFit && !_fitting && _map != null)
+                FitCore();
         }
 
         private void UpdateScrollSize()
@@ -84,6 +112,7 @@ namespace DataverseProcessMapper.UI
         {
             if ((ModifierKeys & Keys.Control) == Keys.Control)
             {
+                _autoFit = false; // manual zoom takes over until the next Zoom to Fit
                 Zoom += e.Delta > 0 ? 0.1f : -0.1f;
                 ((HandledMouseEventArgs)e).Handled = true;
             }

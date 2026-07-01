@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="/CasasHern.DataverseProcessMapper.nuspec" Id="REBFFE6AC91D194B5" />
-  <Relationship Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="/package/services/metadata/core-properties/a77e3490d1404899832be7f4f2312aa6.psmdcp" Id="R760D14F5AA662AD4" />
-</Relationships>

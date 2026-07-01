@@ -27,7 +27,8 @@ namespace DataverseProcessMapper.Data
             {
                 ColumnSet = new ColumnSet(
                     "workflowid", "name", "category", "type",
-                    "xaml", "clientdata", "primaryentity", "statecode", "modifiedon"),
+                    "xaml", "clientdata", "primaryentity", "statecode", "modifiedon",
+                    "createdon", "createdby", "modifiedby", "ownerid", "scope"),
                 Criteria = new FilterExpression(LogicalOperator.And),
                 PageInfo = new PagingInfo { Count = 500, PageNumber = 1 },
                 Orders = { new OrderExpression("name", OrderType.Ascending) }
@@ -68,7 +69,14 @@ namespace DataverseProcessMapper.Data
                 State = GetOptionSet(e, "statecode"),
                 ModifiedOn = e.Contains("modifiedon")
                     ? e.GetAttributeValue<System.DateTime>("modifiedon")
-                    : (System.DateTime?)null
+                    : (System.DateTime?)null,
+                CreatedOn = e.Contains("createdon")
+                    ? e.GetAttributeValue<System.DateTime>("createdon")
+                    : (System.DateTime?)null,
+                CreatedBy = GetLookupName(e, "createdby"),
+                ModifiedBy = GetLookupName(e, "modifiedby"),
+                Owner = GetLookupName(e, "ownerid"),
+                Scope = GetScopeLabel(e)
             };
         }
 
@@ -76,6 +84,28 @@ namespace DataverseProcessMapper.Data
         {
             var v = e.GetAttributeValue<OptionSetValue>(attr);
             return v?.Value ?? -1;
+        }
+
+        /// <summary>Display name of a lookup, preferring the server-formatted value.</summary>
+        private static string GetLookupName(Entity e, string attr)
+        {
+            if (e.FormattedValues.Contains(attr)) return e.FormattedValues[attr];
+            return e.GetAttributeValue<EntityReference>(attr)?.Name;
+        }
+
+        private static string GetScopeLabel(Entity e)
+        {
+            // The server-formatted (localized) label when available.
+            if (e.FormattedValues.Contains("scope")) return e.FormattedValues["scope"];
+
+            switch (GetOptionSet(e, "scope"))
+            {
+                case 1: return "User";
+                case 2: return "Business Unit";
+                case 3: return "Parent: Child Business Units";
+                case 4: return "Organization";
+                default: return null;
+            }
         }
     }
 }

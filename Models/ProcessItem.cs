@@ -33,6 +33,20 @@ namespace DataverseProcessMapper.Models
 
         public DateTime? ModifiedOn { get; set; }
 
+        public DateTime? CreatedOn { get; set; }
+
+        /// <summary>Display name of the <c>createdby</c> user.</summary>
+        public string CreatedBy { get; set; }
+
+        /// <summary>Display name of the <c>modifiedby</c> user.</summary>
+        public string ModifiedBy { get; set; }
+
+        /// <summary>Display name of the <c>ownerid</c> user or team.</summary>
+        public string Owner { get; set; }
+
+        /// <summary>Localized label of the <c>scope</c> option set (e.g. "Organization").</summary>
+        public string Scope { get; set; }
+
         public bool IsModernFlow => Category == 5;
 
         public string CategoryLabel

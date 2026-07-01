@@ -37,7 +37,7 @@ namespace DataverseProcessMapper.Rendering
 
         public static DiagramFont LabelFont => new DiagramFont(FontFamily, 9f, true);
         public static DiagramFont SubtitleFont => new DiagramFont(FontFamily, 7.5f, false);
-        public static DiagramFont EdgeLabelFont => new DiagramFont(FontFamily, 7.5f, false);
+        public static DiagramFont EdgeLabelFont => new DiagramFont(FontFamily, 8.5f, false);
         public static DiagramFont TitleFont => new DiagramFont(FontFamily, 13f, true);
 
         // Layout constants (device-independent units == pixels == points)
@@ -55,7 +55,7 @@ namespace DataverseProcessMapper.Rendering
 
         public static readonly Color CanvasBackground = Color.White;
         public static readonly Color EdgeColor = Color.FromArgb(110, 118, 129);
-        public static readonly Color EdgeLabelColor = Color.FromArgb(80, 86, 94);
+        public static readonly Color EdgeLabelColor = Color.FromArgb(55, 62, 70);
         public static readonly Color TitleColor = Color.FromArgb(33, 41, 54);
         public static readonly Color SubtitleColor = Color.FromArgb(110, 118, 129);
 
