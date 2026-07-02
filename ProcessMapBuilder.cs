@@ -30,8 +30,38 @@ namespace DataverseProcessMapper
 
             NodeSizer.MeasureAll(graph);
             var canvas = LayeredLayoutEngine.Layout(graph);
+            canvas = EnsureTitleFits(graph, canvas);
 
             return new ProcessMap { Graph = graph, CanvasSize = canvas, Source = item };
+        }
+
+        /// <summary>
+        /// Widens the canvas (recentering the nodes) when the title band is wider
+        /// than the diagram, so long process names don't clip in exports.
+        /// </summary>
+        private static SizeF EnsureTitleFits(ProcessGraph graph, SizeF canvas)
+        {
+            if (string.IsNullOrEmpty(graph.Title)) return canvas;
+
+            var titleFont = DiagramStyle.TitleFont;
+            using (var bmp = new Bitmap(1, 1))
+            using (var g = Graphics.FromImage(bmp))
+            using (var f = new Font(titleFont.Family, titleFont.Size,
+                       titleFont.Bold ? FontStyle.Bold : FontStyle.Regular))
+            {
+                float needed = g.MeasureString(graph.Title, f, 100000,
+                                   StringFormat.GenericTypographic).Width + 2 * DiagramStyle.Margin;
+                if (needed <= canvas.Width) return canvas;
+
+                float shift = (needed - canvas.Width) / 2f;
+                foreach (var n in graph.Nodes)
+                {
+                    var b = n.Bounds;
+                    b.X += shift;
+                    n.Bounds = b;
+                }
+                return new SizeF(needed, canvas.Height);
+            }
         }
 
         /// <summary>Renders the map to a GDI+ bitmap at the given scale.</summary>
@@ -40,8 +70,12 @@ namespace DataverseProcessMapper
             int w = System.Math.Max(1, (int)System.Math.Ceiling(map.CanvasSize.Width * scale));
             int h = System.Math.Max(1, (int)System.Math.Ceiling(map.CanvasSize.Height * scale));
 
+            // NOTE: no SetResolution here. Fonts scale with BOTH the bitmap DPI and
+            // the world transform, so raising the DPI on top of ScaleTransform made
+            // text render ~2x larger than the boxes measured for it. The transform
+            // alone scales text and geometry together, matching NodeSizer's
+            // default-resolution measurements.
             var bmp = new Bitmap(w, h);
-            bmp.SetResolution(96f * scale, 96f * scale);
             using (var g = Graphics.FromImage(bmp))
             {
                 g.Clear(DiagramStyle.CanvasBackground);

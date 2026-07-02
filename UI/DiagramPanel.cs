@@ -1,5 +1,7 @@
+using System;
 using System.Drawing;
 using System.Windows.Forms;
+using DataverseProcessMapper.Models;
 using DataverseProcessMapper.Rendering;
 
 namespace DataverseProcessMapper.UI
@@ -14,6 +16,10 @@ namespace DataverseProcessMapper.UI
         private float _zoom = 1f;
         private bool _autoFit = true;   // re-fit on resize until the user zooms manually
         private bool _fitting;          // guards against resize/scrollbar feedback loops
+        private string _selectedId;
+
+        /// <summary>Raised when the user clicks a node (null when the selection is cleared).</summary>
+        public event Action<ProcessNode> NodeSelected;
 
         public DiagramPanel()
         {
@@ -36,6 +42,8 @@ namespace DataverseProcessMapper.UI
         public void SetMap(ProcessMap map)
         {
             _map = map;
+            _selectedId = null;
+            NodeSelected?.Invoke(null);
             AutoScrollPosition = new Point(0, 0);
             if (_autoFit) FitCore();
             else UpdateScrollSize();
@@ -106,6 +114,54 @@ namespace DataverseProcessMapper.UI
 
             using (var surface = new GdiDiagramSurface(g))
                 DiagramRenderer.Render(surface, _map.Graph, _map.CanvasSize);
+
+            // Selection highlight, drawn in diagram coordinates on top of everything.
+            if (_selectedId != null)
+            {
+                var selected = _map.Graph[_selectedId];
+                if (selected != null)
+                {
+                    var r = selected.Bounds;
+                    r.Inflate(3f, 3f);
+                    using (var pen = new Pen(Color.FromArgb(37, 118, 220), 2f))
+                        g.DrawRectangle(pen, r.X, r.Y, r.Width, r.Height);
+                }
+            }
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            Focus();
+            if (e.Button != MouseButtons.Left || _map == null) return;
+
+            var node = HitTest(e.Location);
+            _selectedId = node?.Id;
+            Invalidate();
+            NodeSelected?.Invoke(node);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (_map != null)
+                Cursor = HitTest(e.Location) != null ? Cursors.Hand : Cursors.Default;
+        }
+
+        /// <summary>Maps a client point back through scroll + zoom to diagram space.</summary>
+        private ProcessNode HitTest(Point client)
+        {
+            if (_map == null || _zoom <= 0f) return null;
+            float x = (client.X - AutoScrollPosition.X) / _zoom;
+            float y = (client.Y - AutoScrollPosition.Y) / _zoom;
+
+            // Topmost node wins (nodes are drawn in list order).
+            for (int i = _map.Graph.Nodes.Count - 1; i >= 0; i--)
+            {
+                var n = _map.Graph.Nodes[i];
+                if (n.Bounds.Contains(x, y)) return n;
+            }
+            return null;
         }
 
         protected override void OnMouseWheel(MouseEventArgs e)

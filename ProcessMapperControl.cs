@@ -27,6 +27,8 @@ namespace DataverseProcessMapper
         private TextBox _workflowSearch;
         private DiagramPanel _flowPanel;
         private DiagramPanel _workflowPanel;
+        private NodeDetailsPane _flowDetails;
+        private NodeDetailsPane _workflowDetails;
 
         // Master (unfiltered) lists backing the search boxes.
         private List<ProcessItem> _allFlows = new List<ProcessItem>();
@@ -103,13 +105,20 @@ namespace DataverseProcessMapper
             _flowList = CreateList(flowColumns: true);
             _flowSearch = CreateSearchBox();
             _flowPanel = new DiagramPanel { Dock = DockStyle.Fill };
-            flowTab.Controls.Add(CreateSplit(WrapWithSearch(_flowSearch, _flowList), _flowPanel));
+            _flowDetails = new NodeDetailsPane();
+            flowTab.Controls.Add(CreateSplit(WrapWithSearch(_flowSearch, _flowList),
+                WrapWithDetails(_flowPanel, _flowDetails)));
 
             var wfTab = new TabPage("Classic Workflows");
             _workflowList = CreateList(flowColumns: false);
             _workflowSearch = CreateSearchBox();
             _workflowPanel = new DiagramPanel { Dock = DockStyle.Fill };
-            wfTab.Controls.Add(CreateSplit(WrapWithSearch(_workflowSearch, _workflowList), _workflowPanel));
+            _workflowDetails = new NodeDetailsPane();
+            wfTab.Controls.Add(CreateSplit(WrapWithSearch(_workflowSearch, _workflowList),
+                WrapWithDetails(_workflowPanel, _workflowDetails)));
+
+            _flowPanel.NodeSelected += n => _flowDetails.SetNode(n);
+            _workflowPanel.NodeSelected += n => _workflowDetails.SetNode(n);
 
             _flowList.SelectedIndexChanged += (s, e) => PreviewSelection(_flowList, _flowPanel);
             _workflowList.SelectedIndexChanged += (s, e) => PreviewSelection(_workflowList, _workflowPanel);
@@ -140,6 +149,18 @@ namespace DataverseProcessMapper
                 }
             };
             return box;
+        }
+
+        private static Control WrapWithDetails(DiagramPanel diagram, NodeDetailsPane details)
+        {
+            var host = new Panel { Dock = DockStyle.Fill };
+            details.Dock = DockStyle.Right;
+            details.Width = 260;
+            var splitter = new Splitter { Dock = DockStyle.Right, Width = 5 };
+            host.Controls.Add(diagram);
+            host.Controls.Add(splitter);
+            host.Controls.Add(details);
+            return host;
         }
 
         private static Control WrapWithSearch(TextBox search, ListView list)

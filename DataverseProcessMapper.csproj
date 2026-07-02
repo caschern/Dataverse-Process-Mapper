@@ -23,7 +23,7 @@
     <Company>Cristian Casas</Company>
     <Authors>Cristian Casas</Authors>
     <Product>Dataverse Process Mapper</Product>
-    <Version>1.0.18</Version>
+    <Version>1.0.19</Version>
     <Description>List Classic Workflows and Power Automate flows from Dataverse and render visual process maps, exportable to PDF, HTML or SVG.</Description>
   </PropertyGroup>
 
