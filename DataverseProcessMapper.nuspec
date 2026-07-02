@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
   <metadata>
     <id>CasasHern.DataverseProcessMapper</id>
-    <version>1.0.18</version>
+    <version>1.0.19</version>
     <title>Dataverse Process Mapper</title>
     <authors>Cristian Casas</authors>
     <owners>Cristian Casas</owners>
@@ -11,7 +11,7 @@
     <iconUrl>https://raw.githubusercontent.com/caschern/Dataverse-Process-Mapper/main/images/icon.png</iconUrl>
     <description>List Classic Workflows and Power Automate flows from the Dataverse workflow table and render visual process maps (XAML for workflows, JSON for flows), exportable to PDF, HTML or SVG (Visio/Mural compatible).</description>
     <summary>List Classic Workflows and Power Automate flows from Dataverse and render visual process maps, exportable to PDF, HTML or SVG.</summary>
-    <releaseNotes>1.0.18: Crossing reduction in the layout - child actions are now ordered under their parents so connectors no longer cross. 1.0.17: Orthogonal connectors with lane separation and readable branch labels, fit-to-width auto-scaling preview, SVG export (Visio/Mural compatible), name filter boxes, flow list shows Created On/Created By/Modified By/Owner/Scope. 1.0.15: Add summary and release notes, remove SPDX license element for Tool Library compatibility. 1.0.0: Initial release - two-tab UI for Power Automate flows and classic workflows, GDI+ process maps, PDF and HTML export.</releaseNotes>
+    <releaseNotes>1.0.19: Click a step to see its full inputs in a new details pane (all parameters, wrapped values, pretty-printed fetchXml); HTML export now embeds a crisp vector SVG diagram, a collapsible step tree with per-step details and expand/collapse all; fixed oversized text in exported diagrams and clipped long titles. 1.0.18: Crossing reduction in the layout - child actions are now ordered under their parents so connectors no longer cross. 1.0.17: Orthogonal connectors with lane separation and readable branch labels, fit-to-width auto-scaling preview, SVG export (Visio/Mural compatible), name filter boxes, flow list shows Created On/Created By/Modified By/Owner/Scope. 1.0.15: Add summary and release notes, remove SPDX license element for Tool Library compatibility. 1.0.0: Initial release - two-tab UI for Power Automate flows and classic workflows, GDI+ process maps, PDF and HTML export.</releaseNotes>
     <copyright>Copyright (c) Cristian Casas</copyright>
     <tags>XrmToolBox Dataverse Dynamics365 PowerAutomate Workflow ProcessMap Diagram</tags>
     <dependencies>

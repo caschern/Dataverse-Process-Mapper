@@ -1,34 +1,55 @@
 using System;
-using System.Drawing.Imaging;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Text;
 using DataverseProcessMapper.Models;
+using DataverseProcessMapper.Rendering;
 
 namespace DataverseProcessMapper.Exporters
 {
     /// <summary>
     /// Exports a process map to a self-contained HTML file: the diagram is
-    /// embedded as a high-resolution PNG (base64) and is accompanied by a
-    /// metadata header and a readable step/connector table.
+    /// embedded as an inline vector SVG (crisp at any zoom) and is accompanied
+    /// by a metadata header and a collapsible step tree with per-step details.
     /// </summary>
     public static class HtmlExporter
     {
         public static void Save(ProcessMap map, string path)
         {
-            string pngBase64;
-            using (var bmp = ProcessMapBuilder.RenderToBitmap(map, 2f))
-            using (var ms = new MemoryStream())
-            {
-                bmp.Save(ms, ImageFormat.Png);
-                pngBase64 = Convert.ToBase64String(ms.ToArray());
-            }
-
-            File.WriteAllText(path, BuildHtml(map, pngBase64), Encoding.UTF8);
+            File.WriteAllText(path, BuildHtml(map, BuildSvg(map)), Encoding.UTF8);
         }
 
-        private static string BuildHtml(ProcessMap map, string pngBase64)
+        /// <summary>Renders the diagram to an inline-embeddable SVG element.</summary>
+        private static string BuildSvg(ProcessMap map)
+        {
+            float w = map.CanvasSize.Width + 16;
+            float h = map.CanvasSize.Height + 16;
+
+            string elements;
+            using (var surface = new SvgDiagramSurface())
+            {
+                DiagramRenderer.Render(surface, map.Graph, map.CanvasSize);
+                elements = surface.GetElements();
+            }
+
+            var sb = new StringBuilder();
+            sb.Append("<svg xmlns=\"http://www.w3.org/2000/svg\"")
+              .Append(" width=\"").Append(F(w)).Append("\"")
+              .Append(" height=\"").Append(F(h)).Append("\"")
+              .Append(" viewBox=\"0 0 ").Append(F(w)).Append(' ').Append(F(h)).AppendLine("\">")
+              .Append("<rect width=\"").Append(F(w)).Append("\" height=\"").Append(F(h))
+              .AppendLine("\" fill=\"#FFFFFF\"/>")
+              .AppendLine("<g transform=\"translate(8,8)\">")
+              .Append(elements)
+              .AppendLine("</g></svg>");
+            return sb.ToString();
+        }
+
+        private static string F(float v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+
+        private static string BuildHtml(ProcessMap map, string svg)
         {
             var item = map.Source;
             var sb = new StringBuilder();
@@ -52,22 +73,18 @@ namespace DataverseProcessMapper.Exporters
             sb.AppendLine("</tbody></table>");
 
             sb.AppendLine("<div class=\"diagram\">");
-            sb.AppendLine($"<img alt=\"Process map for {E(map.Graph.Title)}\" src=\"data:image/png;base64,{pngBase64}\">");
+            sb.AppendLine(svg);
             sb.AppendLine("</div>");
 
-            // Step list
+            // Step tree: containers (scopes, conditions, loops) are collapsible.
             sb.AppendLine("<h2>Steps</h2>");
-            sb.AppendLine("<table class=\"steps\"><thead><tr><th>#</th><th>Step</th><th>Kind</th><th>Detail</th></tr></thead><tbody>");
-            int i = 1;
-            foreach (var n in map.Graph.Nodes)
-            {
-                sb.AppendLine("<tr>" +
-                    $"<td class=\"num\">{i++}</td>" +
-                    $"<td><span class=\"dot {KindClass(n.Kind)}\"></span>{E(n.Label.Replace("\n", " "))}</td>" +
-                    $"<td>{E(n.Kind.ToString())}</td>" +
-                    $"<td>{E(n.Subtitle)}</td></tr>");
-            }
-            sb.AppendLine("</tbody></table>");
+            sb.AppendLine("<div class=\"treebar\">" +
+                "<button type=\"button\" onclick=\"document.querySelectorAll('.tree details').forEach(function(d){d.open=true})\">Expand all</button> " +
+                "<button type=\"button\" onclick=\"document.querySelectorAll('.tree details').forEach(function(d){d.open=false})\">Collapse all</button>" +
+                "</div>");
+            sb.AppendLine("<div class=\"tree\">");
+            AppendNodeTree(sb, map.Graph, null);
+            sb.AppendLine("</div>");
 
             // Connectors with labels
             var labeled = map.Graph.Edges.Where(e => !string.IsNullOrEmpty(e.Label)).ToList();
@@ -94,6 +111,53 @@ namespace DataverseProcessMapper.Exporters
 
         private static void Meta(StringBuilder sb, string label, string value)
             => sb.AppendLine($"<tr><th>{E(label)}</th><td>{E(value)}</td></tr>");
+
+        /// <summary>Renders the children of <paramref name="parentId"/> (null = top level).</summary>
+        private static void AppendNodeTree(StringBuilder sb, ProcessGraph graph, string parentId)
+        {
+            foreach (var n in graph.Nodes)
+            {
+                if (n.ParentId != parentId) continue;
+
+                var header = $"<span class=\"dot {KindClass(n.Kind)}\"></span><b>{E(n.Label.Replace("\n", " "))}</b>" +
+                             (string.IsNullOrEmpty(n.Subtitle) ? "" : $" <span class=\"muted\">· {E(n.Subtitle)}</span>");
+
+                bool hasChildren = graph.Nodes.Any(c => c.ParentId == n.Id);
+                if (hasChildren)
+                {
+                    int count = graph.Nodes.Count(c => c.ParentId == n.Id);
+                    sb.AppendLine($"<details><summary>{header} <span class=\"muted\">({count} steps)</span></summary>");
+                    AppendProps(sb, n);
+                    sb.AppendLine("<div class=\"children\">");
+                    AppendNodeTree(sb, graph, n.Id);
+                    sb.AppendLine("</div></details>");
+                }
+                else
+                {
+                    sb.AppendLine($"<div class=\"leaf\">{header}");
+                    AppendProps(sb, n);
+                    sb.AppendLine("</div>");
+                }
+            }
+        }
+
+        private static void AppendProps(StringBuilder sb, ProcessNode n)
+        {
+            if (n.Details == null || n.Details.Count == 0) return;
+            sb.AppendLine("<table class=\"props\">");
+            foreach (var kv in n.Details)
+            {
+                string cell;
+                if (kv.Value != null && kv.Value.IndexOf('\n') >= 0)
+                    cell = $"<td><pre class=\"code\">{E(kv.Value)}</pre></td>";       // pretty-printed XML
+                else if (kv.Value != null && kv.Value.StartsWith("@"))
+                    cell = $"<td class=\"mono\">{E(kv.Value)}</td>";                  // flow expression
+                else
+                    cell = $"<td>{E(kv.Value)}</td>";
+                sb.AppendLine($"<tr><th>{E(kv.Key)}</th>{cell}</tr>");
+            }
+            sb.AppendLine("</table>");
+        }
 
         private static string KindClass(NodeKind kind)
         {
@@ -127,12 +191,27 @@ table.meta { border-collapse:collapse; margin:10px 0 4px; }
 table.meta th { text-align:left; color:var(--muted); font-weight:600; padding:2px 16px 2px 0; }
 table.meta td { padding:2px 0; }
 .diagram { margin:18px 0; overflow:auto; border:1px solid var(--line); border-radius:8px; background:#fff; padding:10px; }
-.diagram img { max-width:100%; height:auto; display:block; }
+.diagram svg { max-width:100%; height:auto; display:block; }
 table.steps { width:100%; border-collapse:collapse; font-size:14px; }
 table.steps th, table.steps td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
 table.steps thead th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
 td.num { color:var(--muted); width:34px; }
 .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:8px; vertical-align:middle; }
+.tree { font-size:14px; }
+.tree details, .tree .leaf { margin:3px 0; }
+.tree summary { cursor:pointer; padding:5px 8px; border-radius:6px; }
+.tree summary:hover { background:#f3f4f6; }
+.tree .leaf { padding:5px 8px; }
+.tree .children { margin:2px 0 6px 14px; border-left:2px solid var(--line); padding-left:14px; }
+.muted { color:var(--muted); font-weight:400; }
+table.props { border-collapse:collapse; margin:2px 0 8px 26px; font-size:12.5px; }
+table.props th { text-align:left; color:var(--muted); font-weight:600; padding:1px 12px 1px 0; vertical-align:top; white-space:nowrap; }
+table.props td { padding:1px 0; word-break:break-word; white-space:pre-wrap; }
+table.props pre.code { margin:2px 0; padding:7px 10px; background:#f6f8fa; border:1px solid var(--line); border-radius:6px; font:12px/1.5 Consolas,'Cascadia Mono',Menlo,monospace; white-space:pre; overflow-x:auto; }
+.mono { font-family:Consolas,'Cascadia Mono',Menlo,monospace; font-size:12.5px; }
+.treebar { margin:2px 0 10px; }
+.treebar button { font:13px 'Segoe UI',sans-serif; padding:4px 12px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer; }
+.treebar button:hover { background:#f3f4f6; }
 .k-trigger{background:#00897b;} .k-start{background:#388e3c;} .k-end{background:#616161;}
 .k-cond{background:#f59f00;} .k-loop{background:#8e24aa;} .k-term{background:#c62828;} .k-action{background:#1976d2;}
 .footer { margin-top:24px; color:var(--muted); font-size:12px; }

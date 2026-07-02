@@ -64,7 +64,7 @@ namespace DataverseProcessMapper.Parsing
             var start = graph.AddNode("Start", NodeKind.Start, NodeShape.Stadium, id: "__start");
 
             var body = FindWorkflowBody(root);
-            var tails = WalkSequence(graph, body, new List<string> { start.Id });
+            var tails = WalkSequence(graph, body, new List<string> { start.Id }, null);
 
             // Only one node so far (the Start) means nothing recognisable was found.
             if (graph.Nodes.Count == 1)
@@ -100,7 +100,7 @@ namespace DataverseProcessMapper.Parsing
         /// sequence, chaining each emitted node to the previous tail(s).
         /// Returns the tail node ids to connect onward.
         /// </summary>
-        private List<string> WalkSequence(ProcessGraph graph, XElement container, List<string> incoming)
+        private List<string> WalkSequence(ProcessGraph graph, XElement container, List<string> incoming, string parentId)
         {
             var tails = incoming;
             foreach (var child in container.Elements())
@@ -110,13 +110,13 @@ namespace DataverseProcessMapper.Parsing
                 if (Local(child).Contains(".")) continue;
                 if (IsMetadata(child)) continue;
 
-                tails = WalkNode(graph, child, tails);
+                tails = WalkNode(graph, child, tails, parentId);
             }
             return tails;
         }
 
         /// <summary>Walks a single activity element. Returns its tail node ids.</summary>
-        private List<string> WalkNode(ProcessGraph graph, XElement el, List<string> incoming)
+        private List<string> WalkNode(ProcessGraph graph, XElement el, List<string> incoming, string parentId)
         {
             var name = Local(el);
 
@@ -124,7 +124,7 @@ namespace DataverseProcessMapper.Parsing
             if (name.Equals("If", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("FlowDecision", StringComparison.OrdinalIgnoreCase))
             {
-                return WalkIf(graph, el, incoming);
+                return WalkIf(graph, el, incoming, parentId);
             }
 
             // --- Control flow: While / DoWhile ---
@@ -132,19 +132,19 @@ namespace DataverseProcessMapper.Parsing
                 name.Equals("DoWhile", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("ForEach", StringComparison.OrdinalIgnoreCase))
             {
-                return WalkLoop(graph, el, incoming);
+                return WalkLoop(graph, el, incoming, parentId);
             }
 
             // --- Control flow: Switch ---
             if (name.StartsWith("Switch", StringComparison.OrdinalIgnoreCase))
             {
-                return WalkSwitch(graph, el, incoming);
+                return WalkSwitch(graph, el, incoming, parentId);
             }
 
             // --- Transparent containers: descend without a node ---
             if (TransparentContainers.Contains(name))
             {
-                return WalkSequence(graph, el, incoming);
+                return WalkSequence(graph, el, incoming, parentId);
             }
 
             // --- Recognised step activity ---
@@ -152,6 +152,8 @@ namespace DataverseProcessMapper.Parsing
             {
                 var node = graph.AddNode(DisplayName(el) ?? Prettify(name), NodeKind.Action, NodeShape.RoundedRect,
                     subtitle: Prettify(name));
+                node.ParentId = parentId;
+                node.Details = ActivityDetails(el);
                 Connect(graph, incoming, node.Id);
                 return new List<string> { node.Id };
             }
@@ -159,16 +161,18 @@ namespace DataverseProcessMapper.Parsing
             // --- Unknown element: if it has step-bearing children, descend; else ignore ---
             if (el.Elements().Any(c => !IsMetadata(c)))
             {
-                return WalkSequence(graph, el, incoming);
+                return WalkSequence(graph, el, incoming, parentId);
             }
 
             return incoming;
         }
 
-        private List<string> WalkIf(ProcessGraph graph, XElement el, List<string> incoming)
+        private List<string> WalkIf(ProcessGraph graph, XElement el, List<string> incoming, string parentId)
         {
             var condition = graph.AddNode(DisplayName(el) ?? "Condition", NodeKind.Condition, NodeShape.Diamond,
                 subtitle: "Check condition");
+            condition.ParentId = parentId;
+            condition.Details = ActivityDetails(el);
             Connect(graph, incoming, condition.Id);
 
             var tails = new List<string>();
@@ -176,7 +180,7 @@ namespace DataverseProcessMapper.Parsing
             var thenEl = ChildBranch(el, "Then");
             if (thenEl != null)
             {
-                var thenTails = WalkSequence(graph, thenEl, new List<string> { condition.Id });
+                var thenTails = WalkSequence(graph, thenEl, new List<string> { condition.Id }, condition.Id);
                 LabelEdges(graph, condition.Id, "Yes");
                 tails.AddRange(thenTails);
             }
@@ -188,7 +192,7 @@ namespace DataverseProcessMapper.Parsing
             var elseEl = ChildBranch(el, "Else");
             if (elseEl != null)
             {
-                var elseTails = WalkSequence(graph, elseEl, new List<string> { condition.Id });
+                var elseTails = WalkSequence(graph, elseEl, new List<string> { condition.Id }, condition.Id);
                 LabelEdges(graph, condition.Id, "No");
                 tails.AddRange(elseTails);
             }
@@ -200,14 +204,16 @@ namespace DataverseProcessMapper.Parsing
             return tails.Distinct().ToList();
         }
 
-        private List<string> WalkLoop(ProcessGraph graph, XElement el, List<string> incoming)
+        private List<string> WalkLoop(ProcessGraph graph, XElement el, List<string> incoming, string parentId)
         {
             var loop = graph.AddNode(DisplayName(el) ?? Prettify(Local(el)), NodeKind.Loop, NodeShape.RoundedRect,
                 subtitle: "Loop");
+            loop.ParentId = parentId;
+            loop.Details = ActivityDetails(el);
             Connect(graph, incoming, loop.Id);
 
             var bodyEl = ChildBranch(el, "Body") ?? el;
-            var bodyTails = WalkSequence(graph, bodyEl, new List<string> { loop.Id });
+            var bodyTails = WalkSequence(graph, bodyEl, new List<string> { loop.Id }, loop.Id);
 
             // Back-edge from the body's tail to the loop header.
             foreach (var t in bodyTails.Distinct())
@@ -217,10 +223,12 @@ namespace DataverseProcessMapper.Parsing
             return new List<string> { loop.Id };
         }
 
-        private List<string> WalkSwitch(ProcessGraph graph, XElement el, List<string> incoming)
+        private List<string> WalkSwitch(ProcessGraph graph, XElement el, List<string> incoming, string parentId)
         {
             var sw = graph.AddNode(DisplayName(el) ?? "Switch", NodeKind.Switch, NodeShape.Diamond,
                 subtitle: "Switch");
+            sw.ParentId = parentId;
+            sw.Details = ActivityDetails(el);
             Connect(graph, incoming, sw.Id);
 
             var tails = new List<string>();
@@ -231,7 +239,7 @@ namespace DataverseProcessMapper.Parsing
             {
                 foreach (var branch in cc.Elements())
                 {
-                    var branchTails = WalkSequence(graph, branch, new List<string> { sw.Id });
+                    var branchTails = WalkSequence(graph, branch, new List<string> { sw.Id }, sw.Id);
                     tails.AddRange(branchTails);
                 }
             }
@@ -241,6 +249,22 @@ namespace DataverseProcessMapper.Parsing
         }
 
         // ---------- helpers ----------
+
+        /// <summary>Details from the activity's XML attributes (entity names, expressions…).</summary>
+        private static List<KeyValuePair<string, string>> ActivityDetails(XElement el)
+        {
+            var details = new List<KeyValuePair<string, string>>
+            {
+                new KeyValuePair<string, string>("Activity", Prettify(Local(el)))
+            };
+            foreach (var a in el.Attributes())
+            {
+                if (a.IsNamespaceDeclaration) continue;
+                if (a.Name.LocalName.Equals("DisplayName", StringComparison.OrdinalIgnoreCase)) continue;
+                details.Add(new KeyValuePair<string, string>(a.Name.LocalName, DetailText.Clean(a.Value)));
+            }
+            return details;
+        }
 
         private static void Connect(ProcessGraph graph, List<string> from, string to)
         {

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using DataverseProcessMapper.Models;
 using Newtonsoft.Json.Linq;
 
@@ -56,6 +57,7 @@ namespace DataverseProcessMapper.Parsing
                         NodeShape.Stadium,
                         id: NodeId("trigger", t.Name),
                         subtitle: ShortType((t.Value as JObject)?["type"]?.ToString()));
+                    node.Details = ExtractDetails(t.Value as JObject);
                     triggerIds.Add(node.Id);
                 }
             }
@@ -86,7 +88,8 @@ namespace DataverseProcessMapper.Parsing
         /// runAfter edges. <paramref name="parentRoots"/> are the node ids that a
         /// root action of this block (empty runAfter) should connect from.
         /// </summary>
-        private void AddActions(ProcessGraph graph, JObject actions, IList<string> parentRoots, string idPrefix)
+        private void AddActions(ProcessGraph graph, JObject actions, IList<string> parentRoots, string idPrefix,
+            string parentId = null)
         {
             // First pass: create a node for every action in this scope.
             var ids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -102,6 +105,8 @@ namespace DataverseProcessMapper.Parsing
                     shape,
                     id: NodeId(idPrefix, p.Name),
                     subtitle: ShortType(type));
+                node.ParentId = parentId;
+                node.Details = ExtractDetails(body);
                 ids[p.Name] = node.Id;
             }
 
@@ -150,12 +155,12 @@ namespace DataverseProcessMapper.Parsing
             if (isIf)
             {
                 if (trueBranch != null && trueBranch.Count > 0)
-                    AddActions(graph, trueBranch, new[] { controlId }, idPrefix + "_yes");
+                    AddActions(graph, trueBranch, new[] { controlId }, idPrefix + "_yes", controlId);
                 else
                     LinkBranchPlaceholder(graph, controlId, "Yes", idPrefix + "_yes");
 
                 if (falseBranch != null && falseBranch.Count > 0)
-                    AddActions(graph, falseBranch, new[] { controlId }, idPrefix + "_no");
+                    AddActions(graph, falseBranch, new[] { controlId }, idPrefix + "_no", controlId);
                 else
                     LinkBranchPlaceholder(graph, controlId, "No", idPrefix + "_no");
 
@@ -173,18 +178,18 @@ namespace DataverseProcessMapper.Parsing
                 {
                     var caseActions = (c.Value as JObject)?["actions"] as JObject;
                     if (caseActions != null && caseActions.Count > 0)
-                        AddActions(graph, caseActions, new[] { controlId }, idPrefix + "_" + Sanitize(c.Name));
+                        AddActions(graph, caseActions, new[] { controlId }, idPrefix + "_" + Sanitize(c.Name), controlId);
                 }
                 var defActions = (body["default"] as JObject)?["actions"] as JObject;
                 if (defActions != null && defActions.Count > 0)
-                    AddActions(graph, defActions, new[] { controlId }, idPrefix + "_default");
+                    AddActions(graph, defActions, new[] { controlId }, idPrefix + "_default", controlId);
                 return;
             }
 
             // Foreach / Until / Scope: a single nested "actions" block.
             if (trueBranch != null && trueBranch.Count > 0)
             {
-                AddActions(graph, trueBranch, new[] { controlId }, idPrefix + "_body");
+                AddActions(graph, trueBranch, new[] { controlId }, idPrefix + "_body", controlId);
             }
         }
 
@@ -204,6 +209,113 @@ namespace DataverseProcessMapper.Parsing
                 }
             }
         }
+
+        // ---------- details extraction ----------
+
+        /// <summary>Builds the label/value pairs shown in the details panel and HTML export.</summary>
+        private static List<KeyValuePair<string, string>> ExtractDetails(JObject body)
+        {
+            var details = new List<KeyValuePair<string, string>>();
+            if (body == null) return details;
+
+            void Add(string key, string value)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                    details.Add(new KeyValuePair<string, string>(key, Truncate(value)));
+            }
+
+            var type = body["type"]?.ToString();
+            Add("Type", type);
+            Add("Description", body["description"]?.ToString());
+
+            var inputs = body["inputs"];
+            var host = inputs?["host"];
+            if (host != null)
+            {
+                Add("Operation", host["operationId"]?.ToString());
+                var apiId = host["apiId"]?.ToString();
+                if (!string.IsNullOrEmpty(apiId))
+                    Add("Connector", apiId.Split('/').Last());
+            }
+
+            // Every parameter, dynamically — whatever the connector defines.
+            var parameters = (inputs as JObject)?["parameters"] as JObject;
+            if (parameters != null)
+            {
+                foreach (var p in parameters.Properties())
+                    Add(p.Name, Compact(p.Value));
+            }
+
+            // Any other input fields, generically (host/parameters are summarized
+            // above; authentication is skipped — it can carry connection secrets).
+            if (inputs is JObject inputsObj)
+            {
+                foreach (var p in inputsObj.Properties())
+                {
+                    var key = p.Name.ToLowerInvariant();
+                    if (key == "host" || key == "parameters" || key == "authentication") continue;
+                    Add(p.Name, Compact(p.Value));
+                }
+            }
+            else if (inputs != null && !IsControlType(type))
+            {
+                // Scalar/array inputs (e.g. Compose with a plain value).
+                Add("Inputs", Compact(inputs));
+            }
+
+            switch ((type ?? "").ToLowerInvariant())
+            {
+                case "if": Add("Condition", Compact(body["expression"])); break;
+                case "switch": Add("Switch on", Compact(body["expression"])); break;
+                case "foreach": Add("For each", Compact(body["foreach"])); break;
+                case "until":
+                    Add("Until", Compact(body["expression"]));
+                    Add("Limit", Compact(body["limit"]));
+                    break;
+            }
+
+            var nested = body["actions"] as JObject;
+            if (nested != null && IsControlType(type))
+                Add("Nested actions", nested.Count.ToString());
+
+            var recurrence = body["recurrence"] as JObject;
+            if (recurrence != null)
+                Add("Recurrence", ("every " + recurrence["interval"] + " " + recurrence["frequency"]).Trim());
+
+            var runAfter = body["runAfter"] as JObject;
+            if (runAfter != null && runAfter.Count > 0)
+                Add("Runs after", string.Join(", ", runAfter.Properties().Select(p => p.Name.Replace('_', ' '))));
+
+            return details;
+        }
+
+        private static bool IsControlType(string type)
+        {
+            switch ((type ?? "").ToLowerInvariant())
+            {
+                case "if":
+                case "switch":
+                case "foreach":
+                case "until":
+                case "scope": return true;
+                default: return false;
+            }
+        }
+
+        /// <summary>
+        /// Single-line compact rendering of a JSON value (strings unquoted).
+        /// Deliberately avoids ToString(Formatting): the plugin runs against the
+        /// HOST's Newtonsoft.Json, which may be older than the compile reference,
+        /// and that overload throws MissingMethodException there.
+        /// </summary>
+        private static string Compact(JToken token)
+        {
+            if (token == null) return null;
+            if (token.Type == JTokenType.String) return token.ToString();
+            return Regex.Replace(token.ToString(), @"\s+", " ");
+        }
+
+        private static string Truncate(string s) => DetailText.Clean(s);
 
         // ---------- helpers ----------
 

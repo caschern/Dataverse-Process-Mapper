@@ -45,6 +45,12 @@ namespace DataverseProcessMapper.Models
 
         // --- assigned by the sizing pass (wrapped lines of Label) ---
         public List<string> Lines { get; set; } = new List<string>();
+
+        /// <summary>Id of the containing control action (Scope/If/Loop/Switch); null at top level.</summary>
+        public string ParentId { get; set; }
+
+        /// <summary>Ordered label/value pairs describing what the step does (inputs, expressions).</summary>
+        public List<KeyValuePair<string, string>> Details { get; set; } = new List<KeyValuePair<string, string>>();
     }
 
     /// <summary>A directed connector between two nodes.</summary>
