@@ -24,7 +24,69 @@ namespace DataverseProcessMapper.Layout
 
             var forward = graph.Edges.Where(e => !e.IsBack).ToList();
             AssignRanks(graph, forward);
-            return Position(graph);
+            var ranks = OrderRanks(graph, forward);
+            return Position(ranks);
+        }
+
+        /// <summary>
+        /// Crossing reduction: orders the nodes of each rank by the barycenter
+        /// (average position) of their neighbors in the adjacent rank, sweeping
+        /// down and up a few times, so children line up under their parents and
+        /// connectors don't cross.
+        /// </summary>
+        private static List<List<ProcessNode>> OrderRanks(ProcessGraph graph, List<ProcessEdge> forward)
+        {
+            var ranks = graph.Nodes
+                .GroupBy(n => n.Rank)
+                .OrderBy(g => g.Key)
+                .Select(g => g.ToList())
+                .ToList();
+
+            var order = new Dictionary<string, int>();
+            foreach (var rank in ranks)
+                for (int i = 0; i < rank.Count; i++)
+                    order[rank[i].Id] = i;
+
+            var parents = forward.GroupBy(e => e.ToId)
+                .ToDictionary(g => g.Key, g => g.Select(e => e.FromId).ToList());
+            var children = forward.GroupBy(e => e.FromId)
+                .ToDictionary(g => g.Key, g => g.Select(e => e.ToId).ToList());
+
+            for (int iter = 0; iter < 4; iter++)
+            {
+                for (int r = 1; r < ranks.Count; r++)          // downward: follow parents
+                    SortByBarycenter(ranks[r], parents, order);
+                for (int r = ranks.Count - 2; r >= 0; r--)     // upward: follow children
+                    SortByBarycenter(ranks[r], children, order);
+            }
+
+            return ranks;
+        }
+
+        private static void SortByBarycenter(List<ProcessNode> rank,
+            Dictionary<string, List<string>> neighbors, Dictionary<string, int> order)
+        {
+            var barycenter = new Dictionary<string, float>();
+            for (int i = 0; i < rank.Count; i++)
+            {
+                var node = rank[i];
+                float value = i; // nodes without neighbors keep their position
+                if (neighbors.TryGetValue(node.Id, out var ids) && ids.Count > 0)
+                {
+                    float sum = 0;
+                    int count = 0;
+                    foreach (var id in ids)
+                        if (order.TryGetValue(id, out var o)) { sum += o; count++; }
+                    if (count > 0) value = sum / count;
+                }
+                barycenter[node.Id] = value;
+            }
+
+            var sorted = rank.OrderBy(n => barycenter[n.Id]).ToList(); // stable
+            rank.Clear();
+            rank.AddRange(sorted);
+            for (int i = 0; i < rank.Count; i++)
+                order[rank[i].Id] = i;
         }
 
         private static Dictionary<string, List<string>> BuildAdjacency(ProcessGraph graph)
@@ -107,31 +169,29 @@ namespace DataverseProcessMapper.Layout
             }
         }
 
-        private static SizeF Position(ProcessGraph graph)
+        private static SizeF Position(List<List<ProcessNode>> ranks)
         {
-            var byRank = graph.Nodes.GroupBy(n => n.Rank).OrderBy(g => g.Key).ToList();
-
             // Per-rank height = tallest node in that rank.
-            var rankHeights = byRank.ToDictionary(g => g.Key, g => g.Max(n => n.Bounds.Height));
+            var rankHeights = ranks.Select(r => r.Max(n => n.Bounds.Height)).ToList();
 
             // First pass: rank widths to find the widest (canvas width).
             float canvasWidth = 0f;
-            var rankWidths = new Dictionary<int, float>();
-            foreach (var rank in byRank)
+            var rankWidths = new List<float>();
+            foreach (var rank in ranks)
             {
-                float w = rank.Sum(n => n.Bounds.Width) + DiagramStyle.HorizontalGap * (rank.Count() - 1);
-                rankWidths[rank.Key] = w;
+                float w = rank.Sum(n => n.Bounds.Width) + DiagramStyle.HorizontalGap * (rank.Count - 1);
+                rankWidths.Add(w);
                 if (w > canvasWidth) canvasWidth = w;
             }
             canvasWidth += 2 * DiagramStyle.Margin;
 
             // Second pass: assign positions, centering each rank.
             float y = DiagramStyle.Margin + DiagramStyle.TitleBandHeight;
-            foreach (var rank in byRank)
+            for (int r = 0; r < ranks.Count; r++)
             {
-                float rowHeight = rankHeights[rank.Key];
-                float x = (canvasWidth - rankWidths[rank.Key]) / 2f;
-                foreach (var node in rank)
+                float rowHeight = rankHeights[r];
+                float x = (canvasWidth - rankWidths[r]) / 2f;
+                foreach (var node in ranks[r])
                 {
                     float ny = y + (rowHeight - node.Bounds.Height) / 2f;
                     node.Bounds = new RectangleF(x, ny, node.Bounds.Width, node.Bounds.Height);
