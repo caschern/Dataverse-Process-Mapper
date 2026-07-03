@@ -10,13 +10,15 @@ namespace DataverseProcessMapper.Parsing
     internal static class DetailText
     {
         private const int MaxLength = 4000;
+        private const int MaxXmlLength = 20000; // XML must stay complete to be reusable (e.g. sent to FetchXML Builder)
 
         public static string Clean(string s)
         {
             if (string.IsNullOrEmpty(s)) return s;
 
             var pretty = TryFormatXml(s);
-            if (pretty != null) return Cap(pretty);
+            if (pretty != null)
+                return pretty.Length <= MaxXmlLength ? pretty : pretty.Substring(0, MaxXmlLength - 3) + "…";
 
             return Cap(s.Replace("\r", " ").Replace("\n", " "));
         }

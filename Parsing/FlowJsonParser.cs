@@ -224,67 +224,79 @@ namespace DataverseProcessMapper.Parsing
                     details.Add(new KeyValuePair<string, string>(key, Truncate(value)));
             }
 
-            var type = body["type"]?.ToString();
-            Add("Type", type);
-            Add("Description", body["description"]?.ToString());
-
-            var inputs = body["inputs"];
-            var host = inputs?["host"];
-            if (host != null)
+            try
             {
-                Add("Operation", host["operationId"]?.ToString());
-                var apiId = host["apiId"]?.ToString();
-                if (!string.IsNullOrEmpty(apiId))
-                    Add("Connector", apiId.Split('/').Last());
-            }
+                var type = body["type"]?.ToString();
+                Add("Type", type);
+                Add("Description", body["description"]?.ToString());
 
-            // Every parameter, dynamically — whatever the connector defines.
-            var parameters = (inputs as JObject)?["parameters"] as JObject;
-            if (parameters != null)
-            {
-                foreach (var p in parameters.Properties())
-                    Add(p.Name, Compact(p.Value));
-            }
+                // Indexing a JValue ("inputs": "@variables('x')") throws — only
+                // drill in when inputs is actually an object.
+                var inputs = body["inputs"];
+                var inputsObj = inputs as JObject;
 
-            // Any other input fields, generically (host/parameters are summarized
-            // above; authentication is skipped — it can carry connection secrets).
-            if (inputs is JObject inputsObj)
-            {
-                foreach (var p in inputsObj.Properties())
+                var host = inputsObj?["host"] as JObject;
+                if (host != null)
                 {
-                    var key = p.Name.ToLowerInvariant();
-                    if (key == "host" || key == "parameters" || key == "authentication") continue;
-                    Add(p.Name, Compact(p.Value));
+                    Add("Operation", host["operationId"]?.ToString());
+                    var apiId = host["apiId"]?.ToString();
+                    if (!string.IsNullOrEmpty(apiId))
+                        Add("Connector", apiId.Split('/').Last());
                 }
+
+                // Every parameter, dynamically — whatever the connector defines.
+                var parameters = inputsObj?["parameters"] as JObject;
+                if (parameters != null)
+                {
+                    foreach (var p in parameters.Properties())
+                        Add(p.Name, Compact(p.Value));
+                }
+
+                // Any other input fields, generically (host/parameters are summarized
+                // above; authentication is skipped — it can carry connection secrets).
+                if (inputsObj != null)
+                {
+                    foreach (var p in inputsObj.Properties())
+                    {
+                        var key = p.Name.ToLowerInvariant();
+                        if (key == "host" || key == "parameters" || key == "authentication") continue;
+                        Add(p.Name, Compact(p.Value));
+                    }
+                }
+                else if (inputs != null && !IsControlType(type))
+                {
+                    // Scalar/array inputs (e.g. Compose with a plain value).
+                    Add("Inputs", Compact(inputs));
+                }
+
+                switch ((type ?? "").ToLowerInvariant())
+                {
+                    case "if": Add("Condition", Compact(body["expression"])); break;
+                    case "switch": Add("Switch on", Compact(body["expression"])); break;
+                    case "foreach": Add("For each", Compact(body["foreach"])); break;
+                    case "until":
+                        Add("Until", Compact(body["expression"]));
+                        Add("Limit", Compact(body["limit"]));
+                        break;
+                }
+
+                var nested = body["actions"] as JObject;
+                if (nested != null && IsControlType(type))
+                    Add("Nested actions", nested.Count.ToString());
+
+                var recurrence = body["recurrence"] as JObject;
+                if (recurrence != null)
+                    Add("Recurrence", ("every " + recurrence["interval"] + " " + recurrence["frequency"]).Trim());
+
+                var runAfter = body["runAfter"] as JObject;
+                if (runAfter != null && runAfter.Count > 0)
+                    Add("Runs after", string.Join(", ", runAfter.Properties().Select(p => p.Name.Replace('_', ' '))));
             }
-            else if (inputs != null && !IsControlType(type))
+            catch (Exception ex)
             {
-                // Scalar/array inputs (e.g. Compose with a plain value).
-                Add("Inputs", Compact(inputs));
+                // Details are best-effort — never let them break the map itself.
+                Add("Note", "Some details could not be read: " + ex.Message);
             }
-
-            switch ((type ?? "").ToLowerInvariant())
-            {
-                case "if": Add("Condition", Compact(body["expression"])); break;
-                case "switch": Add("Switch on", Compact(body["expression"])); break;
-                case "foreach": Add("For each", Compact(body["foreach"])); break;
-                case "until":
-                    Add("Until", Compact(body["expression"]));
-                    Add("Limit", Compact(body["limit"]));
-                    break;
-            }
-
-            var nested = body["actions"] as JObject;
-            if (nested != null && IsControlType(type))
-                Add("Nested actions", nested.Count.ToString());
-
-            var recurrence = body["recurrence"] as JObject;
-            if (recurrence != null)
-                Add("Recurrence", ("every " + recurrence["interval"] + " " + recurrence["frequency"]).Trim());
-
-            var runAfter = body["runAfter"] as JObject;
-            if (runAfter != null && runAfter.Count > 0)
-                Add("Runs after", string.Join(", ", runAfter.Properties().Select(p => p.Name.Replace('_', ' '))));
 
             return details;
         }

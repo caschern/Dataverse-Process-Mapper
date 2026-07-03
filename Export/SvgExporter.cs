@@ -22,7 +22,7 @@ namespace DataverseProcessMapper.Exporters
             string elements;
             using (var surface = new SvgDiagramSurface())
             {
-                DiagramRenderer.Render(surface, map.Graph, map.CanvasSize);
+                DiagramRenderer.Render(surface, map.ViewGraph, map.CanvasSize);
                 elements = surface.GetElements();
             }
 

@@ -29,7 +29,7 @@ namespace DataverseProcessMapper.Exporters
                     gfx.DrawRectangle(XBrushes.White, 0, 0, w, h);
                     gfx.TranslateTransform(8, 8);
                     var surface = new PdfDiagramSurface(gfx);
-                    DiagramRenderer.Render(surface, map.Graph, map.CanvasSize);
+                    DiagramRenderer.Render(surface, map.ViewGraph, map.CanvasSize);
                 }
 
                 document.Save(path);

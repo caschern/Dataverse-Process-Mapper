@@ -41,14 +41,15 @@ namespace DataverseProcessMapper.Layout
                 if (size.Width > textWidth) textWidth = size.Width;
             }
 
-            if (!string.IsNullOrEmpty(node.Subtitle))
+            var subtitle = node.DisplaySubtitle;
+            if (!string.IsNullOrEmpty(subtitle))
             {
-                var subSize = MeasureString(g, node.Subtitle, DiagramStyle.SubtitleFont);
+                var subSize = MeasureString(g, subtitle, DiagramStyle.SubtitleFont);
                 if (subSize.Width > textWidth) textWidth = subSize.Width;
             }
 
             float width = textWidth + 2 * DiagramStyle.NodePadX;
-            float lineCount = node.Lines.Count + (string.IsNullOrEmpty(node.Subtitle) ? 0 : 1);
+            float lineCount = node.Lines.Count + (string.IsNullOrEmpty(subtitle) ? 0 : 1);
             float height = lineCount * DiagramStyle.LineHeight + 2 * DiagramStyle.NodePadY;
 
             if (diamond)

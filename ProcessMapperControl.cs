@@ -8,15 +8,37 @@ using DataverseProcessMapper.Exporters;
 using DataverseProcessMapper.Models;
 using DataverseProcessMapper.UI;
 using XrmToolBox.Extensibility;
+using XrmToolBox.Extensibility.Interfaces;
 
 namespace DataverseProcessMapper
 {
-    public partial class ProcessMapperControl : PluginControlBase
+    public partial class ProcessMapperControl : PluginControlBase, IMessageBusHost
     {
+        // --- IMessageBusHost: lets this tool hand data to other XrmToolBox tools ---
+
+        public event EventHandler<MessageBusEventArgs> OnOutgoingMessage;
+
+        public void OnIncomingMessage(MessageBusEventArgs message)
+        {
+            // This tool doesn't accept incoming payloads (yet).
+        }
+
+        /// <summary>Opens (or focuses) FetchXML Builder with the given query loaded.</summary>
+        private void OpenInFetchXmlBuilder(string fetchXml)
+        {
+            if (string.IsNullOrWhiteSpace(fetchXml)) return;
+            OnOutgoingMessage?.Invoke(this, new MessageBusEventArgs("FetchXML Builder")
+            {
+                TargetArgument = fetchXml
+            });
+        }
+
         private ToolStripButton _loadButton;
         private ToolStripButton _pdfButton;
         private ToolStripButton _htmlButton;
         private ToolStripButton _svgButton;
+        private ToolStripButton _pngButton;
+        private ToolStripButton _exportAllButton;
         private ToolStripButton _fitButton;
         private ToolStripLabel _status;
 
@@ -75,6 +97,22 @@ namespace DataverseProcessMapper
             };
             _svgButton.Click += (s, e) => Export(ExportFormat.Svg);
 
+            _pngButton = new ToolStripButton("Generate PNG")
+            {
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                Enabled = false,
+                ToolTipText = "High-resolution image for chat, email and slides"
+            };
+            _pngButton.Click += (s, e) => Export(ExportFormat.Png);
+
+            _exportAllButton = new ToolStripButton("Export All HTML")
+            {
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                Enabled = false,
+                ToolTipText = "Export every process in the current list to a folder with an index page"
+            };
+            _exportAllButton.Click += (s, e) => ExportAllHtml();
+
             _fitButton = new ToolStripButton("Zoom to Fit")
             {
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
@@ -94,7 +132,8 @@ namespace DataverseProcessMapper
             toolbar.Items.AddRange(new ToolStripItem[]
             {
                 _loadButton, new ToolStripSeparator(),
-                _pdfButton, _htmlButton, _svgButton, new ToolStripSeparator(),
+                _pdfButton, _htmlButton, _svgButton, _pngButton, new ToolStripSeparator(),
+                _exportAllButton, new ToolStripSeparator(),
                 _fitButton, new ToolStripSeparator(),
                 _status, closeButton
             });
@@ -119,6 +158,8 @@ namespace DataverseProcessMapper
 
             _flowPanel.NodeSelected += n => _flowDetails.SetNode(n);
             _workflowPanel.NodeSelected += n => _workflowDetails.SetNode(n);
+            _flowDetails.FetchXmlRequested += OpenInFetchXmlBuilder;
+            _workflowDetails.FetchXmlRequested += OpenInFetchXmlBuilder;
 
             _flowList.SelectedIndexChanged += (s, e) => PreviewSelection(_flowList, _flowPanel);
             _workflowList.SelectedIndexChanged += (s, e) => PreviewSelection(_workflowList, _workflowPanel);
@@ -341,7 +382,7 @@ namespace DataverseProcessMapper
 
         // ---------------------------------------------------------- exporting
 
-        private enum ExportFormat { Pdf, Html, Svg }
+        private enum ExportFormat { Pdf, Html, Svg, Png }
 
         private void Export(ExportFormat format)
         {
@@ -367,6 +408,10 @@ namespace DataverseProcessMapper
                         dialog.Filter = "SVG image (*.svg)|*.svg";
                         dialog.FileName = safeName + ".svg";
                         break;
+                    case ExportFormat.Png:
+                        dialog.Filter = "PNG image (*.png)|*.png";
+                        dialog.FileName = safeName + ".png";
+                        break;
                     default:
                         dialog.Filter = "HTML document (*.html)|*.html";
                         dialog.FileName = safeName + ".html";
@@ -385,6 +430,10 @@ namespace DataverseProcessMapper
                             break;
                         case ExportFormat.Svg:
                             SvgExporter.Save(map, dialog.FileName);
+                            break;
+                        case ExportFormat.Png:
+                            using (var bmp = ProcessMapBuilder.RenderToBitmap(map, 2f))
+                                bmp.Save(dialog.FileName, System.Drawing.Imaging.ImageFormat.Png);
                             break;
                         default:
                             HtmlExporter.Save(map, dialog.FileName);
@@ -409,6 +458,68 @@ namespace DataverseProcessMapper
             }
         }
 
+        /// <summary>
+        /// Exports every process in the current tab's (filtered) list to one
+        /// HTML file each, plus an index.html linking them.
+        /// </summary>
+        private void ExportAllHtml()
+        {
+            var items = CurrentList().Items.Cast<ListViewItem>()
+                .Select(l => l.Tag as ProcessItem)
+                .Where(p => p != null)
+                .ToList();
+            if (items.Count == 0)
+            {
+                MessageBox.Show(this, "There are no processes in the current list to export.",
+                    "Nothing to export", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            string folder;
+            using (var dlg = new FolderBrowserDialog
+            {
+                Description = $"Choose a folder for the {items.Count} exported HTML files"
+            })
+            {
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                folder = dlg.SelectedPath;
+            }
+
+            var setLabel = _tabs.SelectedIndex == 0 ? "Power Automate Flows" : "Classic Workflows";
+
+            WorkAsync(new WorkAsyncInfo
+            {
+                Message = $"Exporting {items.Count} processes to HTML...",
+                Work = (worker, args) =>
+                {
+                    args.Result = BulkHtmlExporter.Export(items, folder, setLabel,
+                        s => worker.ReportProgress(0, s));
+                },
+                ProgressChanged = args => SetWorkingMessage(args.UserState?.ToString()),
+                PostWorkCallBack = args =>
+                {
+                    if (args.Error != null)
+                    {
+                        MessageBox.Show(this, "Export failed:\n\n" + args.Error.Message, "Error",
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+
+                    var result = (BulkExportResult)args.Result;
+                    var text = $"Exported {result.Exported} of {items.Count} processes.";
+                    if (result.Failures.Count > 0)
+                        text += $"\n{result.Failures.Count} failed (listed at the bottom of the index page).";
+                    text += "\n\nOpen the index now?";
+
+                    if (MessageBox.Show(this, text, "Export complete",
+                            MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+                    {
+                        System.Diagnostics.Process.Start(result.IndexPath);
+                    }
+                }
+            });
+        }
+
         // ------------------------------------------------------------ helpers
 
         private DiagramPanel CurrentPanel()
@@ -426,7 +537,9 @@ namespace DataverseProcessMapper
             _pdfButton.Enabled = hasMap;
             _htmlButton.Enabled = hasMap;
             _svgButton.Enabled = hasMap;
+            _pngButton.Enabled = hasMap;
             _fitButton.Enabled = hasMap;
+            _exportAllButton.Enabled = CurrentList()?.Items.Count > 0;
         }
 
         private static string MakeSafeFileName(string name)
