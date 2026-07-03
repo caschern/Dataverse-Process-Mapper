@@ -30,7 +30,9 @@ namespace DataverseProcessMapper.Exporters
             string elements;
             using (var surface = new SvgDiagramSurface())
             {
-                DiagramRenderer.Render(surface, map.Graph, map.CanvasSize);
+                // Diagram = what's on screen (collapsed containers stay collapsed);
+                // the step tree below always documents the FULL graph.
+                DiagramRenderer.Render(surface, map.ViewGraph, map.CanvasSize);
                 elements = surface.GetElements();
             }
 
@@ -191,7 +193,7 @@ table.meta { border-collapse:collapse; margin:10px 0 4px; }
 table.meta th { text-align:left; color:var(--muted); font-weight:600; padding:2px 16px 2px 0; }
 table.meta td { padding:2px 0; }
 .diagram { margin:18px 0; overflow:auto; border:1px solid var(--line); border-radius:8px; background:#fff; padding:10px; }
-.diagram svg { max-width:100%; height:auto; display:block; }
+.diagram svg { max-width:100%; height:auto; display:block; margin:0 auto; }
 table.steps { width:100%; border-collapse:collapse; font-size:14px; }
 table.steps th, table.steps td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
 table.steps thead th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
@@ -204,10 +206,10 @@ td.num { color:var(--muted); width:34px; }
 .tree .leaf { padding:5px 8px; }
 .tree .children { margin:2px 0 6px 14px; border-left:2px solid var(--line); padding-left:14px; }
 .muted { color:var(--muted); font-weight:400; }
-table.props { border-collapse:collapse; margin:2px 0 8px 26px; font-size:12.5px; }
-table.props th { text-align:left; color:var(--muted); font-weight:600; padding:1px 12px 1px 0; vertical-align:top; white-space:nowrap; }
-table.props td { padding:1px 0; word-break:break-word; white-space:pre-wrap; }
-table.props pre.code { margin:2px 0; padding:7px 10px; background:#f6f8fa; border:1px solid var(--line); border-radius:6px; font:12px/1.5 Consolas,'Cascadia Mono',Menlo,monospace; white-space:pre; overflow-x:auto; }
+table.props { table-layout:fixed; width:calc(100% - 26px); border-collapse:collapse; margin:2px 0 8px 26px; font-size:12.5px; }
+table.props th { width:140px; text-align:left; color:var(--muted); font-weight:600; padding:1px 12px 1px 0; vertical-align:top; overflow-wrap:break-word; }
+table.props td { padding:1px 0; overflow-wrap:anywhere; white-space:pre-wrap; }
+table.props pre.code { margin:2px 0; padding:7px 10px; background:#f6f8fa; border:1px solid var(--line); border-radius:6px; font:12px/1.5 Consolas,'Cascadia Mono',Menlo,monospace; white-space:pre; overflow-x:auto; max-width:100%; }
 .mono { font-family:Consolas,'Cascadia Mono',Menlo,monospace; font-size:12.5px; }
 .treebar { margin:2px 0 10px; }
 .treebar button { font:13px 'Segoe UI',sans-serif; padding:4px 12px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer; }

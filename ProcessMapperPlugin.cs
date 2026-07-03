@@ -11,7 +11,7 @@ namespace DataverseProcessMapper
     /// </summary>
     [Export(typeof(IXrmToolBoxPlugin))]
     [ExportMetadata("Name", "Dataverse Process Mapper")]
-    [ExportMetadata("Description", "List Classic Workflows and Power Automate flows and render visual process maps, exportable to PDF or HTML.")]
+    [ExportMetadata("Description", "Visualize Power Automate flows and classic workflows as interactive process maps: collapse scopes and loops, inspect each step's inputs and fetchXml, hand queries to FetchXML Builder, and export to PDF, HTML, SVG or PNG — including a one-click HTML documentation pack.")]
     [ExportMetadata("BackgroundColor", "White")]
     [ExportMetadata("PrimaryFontColor", "Black")]
     [ExportMetadata("SecondaryFontColor", "DarkGray")]

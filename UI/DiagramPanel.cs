@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 using DataverseProcessMapper.Models;
@@ -17,6 +18,7 @@ namespace DataverseProcessMapper.UI
         private bool _autoFit = true;   // re-fit on resize until the user zooms manually
         private bool _fitting;          // guards against resize/scrollbar feedback loops
         private string _selectedId;
+        private HashSet<string> _viewParents = new HashSet<string>();
 
         /// <summary>Raised when the user clicks a node (null when the selection is cleared).</summary>
         public event Action<ProcessNode> NodeSelected;
@@ -44,10 +46,19 @@ namespace DataverseProcessMapper.UI
             _map = map;
             _selectedId = null;
             NodeSelected?.Invoke(null);
+            RebuildViewCaches();
             AutoScrollPosition = new Point(0, 0);
             if (_autoFit) FitCore();
             else UpdateScrollSize();
             Invalidate();
+        }
+
+        private void RebuildViewCaches()
+        {
+            _viewParents = new HashSet<string>();
+            if (_map?.ViewGraph == null) return;
+            foreach (var n in _map.ViewGraph.Nodes)
+                if (n.ParentId != null) _viewParents.Add(n.ParentId);
         }
 
         public ProcessMap Map => _map;
@@ -113,12 +124,12 @@ namespace DataverseProcessMapper.UI
             g.FillRectangle(Brushes.White, 0, 0, _map.CanvasSize.Width, _map.CanvasSize.Height);
 
             using (var surface = new GdiDiagramSurface(g))
-                DiagramRenderer.Render(surface, _map.Graph, _map.CanvasSize);
+                DiagramRenderer.Render(surface, _map.ViewGraph, _map.CanvasSize, interactive: true);
 
             // Selection highlight, drawn in diagram coordinates on top of everything.
             if (_selectedId != null)
             {
-                var selected = _map.Graph[_selectedId];
+                var selected = _map.ViewGraph[_selectedId];
                 if (selected != null)
                 {
                     var r = selected.Bounds;
@@ -135,6 +146,14 @@ namespace DataverseProcessMapper.UI
             Focus();
             if (e.Button != MouseButtons.Left || _map == null) return;
 
+            // Expand/collapse glyphs take priority over node selection.
+            var toggle = HitToggle(ToDiagram(e.Location));
+            if (toggle != null)
+            {
+                ToggleCollapse(toggle);
+                return;
+            }
+
             var node = HitTest(e.Location);
             _selectedId = node?.Id;
             Invalidate();
@@ -145,21 +164,62 @@ namespace DataverseProcessMapper.UI
         {
             base.OnMouseMove(e);
             if (_map != null)
-                Cursor = HitTest(e.Location) != null ? Cursors.Hand : Cursors.Default;
+            {
+                var pt = ToDiagram(e.Location);
+                Cursor = HitToggle(pt) != null || HitTest(e.Location) != null
+                    ? Cursors.Hand : Cursors.Default;
+            }
+        }
+
+        private void ToggleCollapse(ProcessNode container)
+        {
+            container.Collapsed = !container.Collapsed;
+            ProcessMapBuilder.RefreshView(_map);
+            RebuildViewCaches();
+
+            // The selected node may have been hidden by the collapse.
+            if (_selectedId != null && _map.ViewGraph[_selectedId] == null)
+            {
+                _selectedId = null;
+                NodeSelected?.Invoke(null);
+            }
+
+            if (_autoFit) FitCore();
+            else UpdateScrollSize();
+            Invalidate();
+        }
+
+        private PointF ToDiagram(Point client)
+        {
+            if (_zoom <= 0f) return PointF.Empty;
+            return new PointF(
+                (client.X - AutoScrollPosition.X) / _zoom,
+                (client.Y - AutoScrollPosition.Y) / _zoom);
+        }
+
+        /// <summary>The container whose [+]/[-] glyph is under the point, if any.</summary>
+        private ProcessNode HitToggle(PointF pt)
+        {
+            if (_map?.ViewGraph == null) return null;
+            foreach (var n in _map.ViewGraph.Nodes)
+            {
+                if (n.HiddenCount == 0 && !_viewParents.Contains(n.Id)) continue;
+                if (DiagramRenderer.ToggleRect(n).Contains(pt)) return n;
+            }
+            return null;
         }
 
         /// <summary>Maps a client point back through scroll + zoom to diagram space.</summary>
         private ProcessNode HitTest(Point client)
         {
             if (_map == null || _zoom <= 0f) return null;
-            float x = (client.X - AutoScrollPosition.X) / _zoom;
-            float y = (client.Y - AutoScrollPosition.Y) / _zoom;
+            var pt = ToDiagram(client);
 
             // Topmost node wins (nodes are drawn in list order).
-            for (int i = _map.Graph.Nodes.Count - 1; i >= 0; i--)
+            for (int i = _map.ViewGraph.Nodes.Count - 1; i >= 0; i--)
             {
-                var n = _map.Graph.Nodes[i];
-                if (n.Bounds.Contains(x, y)) return n;
+                var n = _map.ViewGraph.Nodes[i];
+                if (n.Bounds.Contains(pt.X, pt.Y)) return n;
             }
             return null;
         }

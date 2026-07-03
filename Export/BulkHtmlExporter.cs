@@ -1,0 +1,135 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net;
+using System.Text;
+using DataverseProcessMapper.Models;
+
+namespace DataverseProcessMapper.Exporters
+{
+    public class BulkExportResult
+    {
+        public int Exported;
+        public List<string> Failures = new List<string>();
+        public string IndexPath;
+    }
+
+    /// <summary>
+    /// Exports a set of processes to one HTML file each, plus an index.html
+    /// linking them — a browsable documentation pack for the environment.
+    /// Individual failures are recorded and skipped, never fatal.
+    /// </summary>
+    public static class BulkHtmlExporter
+    {
+        private class IndexEntry
+        {
+            public ProcessItem Item;
+            public string File;
+            public int Steps;
+        }
+
+        public static BulkExportResult Export(IList<ProcessItem> items, string folder, string setLabel,
+            Action<string> progress)
+        {
+            var result = new BulkExportResult();
+            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var entries = new List<IndexEntry>();
+
+            int i = 0;
+            foreach (var item in items)
+            {
+                i++;
+                progress?.Invoke($"Exporting {i} of {items.Count}: {item.Name}");
+                try
+                {
+                    var map = ProcessMapBuilder.Build(item);
+                    var file = UniqueName(usedNames, SafeFileName(item.Name ?? "process")) + ".html";
+                    HtmlExporter.Save(map, Path.Combine(folder, file));
+                    entries.Add(new IndexEntry { Item = item, File = file, Steps = map.Graph.Nodes.Count });
+                    result.Exported++;
+                }
+                catch (Exception ex)
+                {
+                    result.Failures.Add($"{item.Name}: {ex.Message}");
+                }
+            }
+
+            result.IndexPath = Path.Combine(folder, "index.html");
+            File.WriteAllText(result.IndexPath, BuildIndex(entries, result.Failures, setLabel), Encoding.UTF8);
+            return result;
+        }
+
+        private static string BuildIndex(List<IndexEntry> entries, List<string> failures, string setLabel)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("<!DOCTYPE html>");
+            sb.AppendLine("<html lang=\"en\"><head>");
+            sb.AppendLine("<meta charset=\"utf-8\">");
+            sb.AppendLine("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+            sb.AppendLine($"<title>{E(setLabel)} – Process Documentation</title>");
+            sb.AppendLine("<style>");
+            sb.AppendLine(@"
+:root { --fg:#1f2936; --muted:#6b7280; --line:#e5e7eb; }
+* { box-sizing:border-box; }
+body { margin:0; background:#f3f4f6; color:var(--fg); font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+.wrap { max-width:1000px; margin:24px auto; background:#fff; padding:28px 34px; border-radius:12px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+h1 { margin:0 0 4px; font-size:24px; }
+p.sub { margin:0 0 18px; color:var(--muted); }
+table { width:100%; border-collapse:collapse; font-size:14px; }
+th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+thead th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+a { color:#1859a9; text-decoration:none; }
+a:hover { text-decoration:underline; }
+td.num { color:var(--muted); text-align:right; }
+h2 { margin:26px 0 8px; font-size:16px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+li { color:#993c1d; }
+.footer { margin-top:24px; color:var(--muted); font-size:12px; }");
+            sb.AppendLine("</style></head><body>");
+            sb.AppendLine("<div class=\"wrap\">");
+            sb.AppendLine($"<h1>{E(setLabel)}</h1>");
+            sb.AppendLine($"<p class=\"sub\">{entries.Count} processes · generated {DateTime.Now:yyyy-MM-dd HH:mm}</p>");
+
+            sb.AppendLine("<table><thead><tr><th>Process</th><th>Status</th><th>Table</th><th>Steps</th></tr></thead><tbody>");
+            foreach (var e in entries)
+            {
+                sb.AppendLine("<tr>" +
+                    $"<td><a href=\"{Uri.EscapeDataString(e.File)}\">{E(e.Item.Name)}</a></td>" +
+                    $"<td>{E(e.Item.StateLabel)}</td>" +
+                    $"<td>{E(string.IsNullOrEmpty(e.Item.PrimaryEntity) ? "—" : e.Item.PrimaryEntity)}</td>" +
+                    $"<td class=\"num\">{e.Steps}</td></tr>");
+            }
+            sb.AppendLine("</tbody></table>");
+
+            if (failures.Count > 0)
+            {
+                sb.AppendLine($"<h2>Not exported ({failures.Count})</h2><ul>");
+                foreach (var f in failures)
+                    sb.AppendLine($"<li>{E(f)}</li>");
+                sb.AppendLine("</ul>");
+            }
+
+            sb.AppendLine("<p class=\"footer\">Generated by Dataverse Process Mapper for XrmToolBox.</p>");
+            sb.AppendLine("</div></body></html>");
+            return sb.ToString();
+        }
+
+        private static string SafeFileName(string name)
+        {
+            foreach (var c in Path.GetInvalidFileNameChars())
+                name = name.Replace(c, '_');
+            name = name.Trim();
+            return name.Length > 80 ? name.Substring(0, 80) : name;
+        }
+
+        private static string UniqueName(HashSet<string> used, string baseName)
+        {
+            var candidate = baseName;
+            int n = 2;
+            while (!used.Add(candidate))
+                candidate = baseName + "_" + n++;
+            return candidate;
+        }
+
+        private static string E(string s) => string.IsNullOrEmpty(s) ? "" : WebUtility.HtmlEncode(s);
+    }
+}

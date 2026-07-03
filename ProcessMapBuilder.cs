@@ -9,7 +9,12 @@ namespace DataverseProcessMapper
     /// <summary>A laid-out, ready-to-render process map.</summary>
     public class ProcessMap
     {
+        /// <summary>The full parsed graph (details panel, HTML step tree).</summary>
         public ProcessGraph Graph { get; set; }
+
+        /// <summary>The contracted graph currently on screen (collapsed containers hide their subtrees).</summary>
+        public ProcessGraph ViewGraph { get; set; }
+
         public SizeF CanvasSize { get; set; }
         public ProcessItem Source { get; set; }
     }
@@ -28,11 +33,24 @@ namespace DataverseProcessMapper
             IProcessParser parser = item.IsModernFlow ? (IProcessParser)FlowParser : WorkflowParser;
             var graph = parser.Parse(item);
 
-            NodeSizer.MeasureAll(graph);
-            var canvas = LayeredLayoutEngine.Layout(graph);
-            canvas = EnsureTitleFits(graph, canvas);
+            var map = new ProcessMap { Graph = graph, Source = item };
+            RefreshView(map);
+            return map;
+        }
 
-            return new ProcessMap { Graph = graph, CanvasSize = canvas, Source = item };
+        /// <summary>
+        /// Recomputes the visible graph from the nodes' Collapsed flags and lays
+        /// it out again. Called after every expand/collapse toggle.
+        /// </summary>
+        public static void RefreshView(ProcessMap map)
+        {
+            var view = GraphContraction.BuildView(map.Graph);
+            NodeSizer.MeasureAll(view);
+            var canvas = LayeredLayoutEngine.Layout(view);
+            canvas = EnsureTitleFits(view, canvas);
+
+            map.ViewGraph = view;
+            map.CanvasSize = canvas;
         }
 
         /// <summary>
@@ -81,7 +99,7 @@ namespace DataverseProcessMapper
                 g.Clear(DiagramStyle.CanvasBackground);
                 g.ScaleTransform(scale, scale);
                 using (var surface = new GdiDiagramSurface(g))
-                    DiagramRenderer.Render(surface, map.Graph, map.CanvasSize);
+                    DiagramRenderer.Render(surface, map.ViewGraph, map.CanvasSize);
             }
             return bmp;
         }

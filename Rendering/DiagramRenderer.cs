@@ -13,7 +13,8 @@ namespace DataverseProcessMapper.Rendering
     /// </summary>
     public static class DiagramRenderer
     {
-        public static void Render(IDiagramSurface surface, ProcessGraph graph, SizeF canvas)
+        public static void Render(IDiagramSurface surface, ProcessGraph graph, SizeF canvas,
+            bool interactive = false)
         {
             DrawTitle(surface, graph, canvas);
 
@@ -24,6 +25,10 @@ namespace DataverseProcessMapper.Rendering
 
             foreach (var node in graph.Nodes)
                 DrawNode(surface, node);
+
+            // Expand/collapse glyphs only make sense on screen, not in exports.
+            if (interactive)
+                DrawToggleGlyphs(surface, graph);
 
             // If two label chips collide, push the later one below the earlier.
             for (int i = 1; i < labels.Count; i++)
@@ -52,6 +57,38 @@ namespace DataverseProcessMapper.Rendering
         {
             public string Text;
             public RectangleF Backing;
+        }
+
+        // ---------- expand/collapse glyphs ----------
+
+        /// <summary>The clickable [+]/[-] square on a container node.</summary>
+        public static RectangleF ToggleRect(ProcessNode n)
+            => new RectangleF(n.Bounds.Right - 8f, n.Bounds.Y - 6f, 14f, 14f);
+
+        private static void DrawToggleGlyphs(IDiagramSurface s, ProcessGraph graph)
+        {
+            var expandedContainers = new HashSet<string>();
+            foreach (var n in graph.Nodes)
+                if (n.ParentId != null) expandedContainers.Add(n.ParentId);
+
+            foreach (var n in graph.Nodes)
+            {
+                bool collapsed = n.HiddenCount > 0;
+                bool expanded = expandedContainers.Contains(n.Id);
+                if (!collapsed && !expanded) continue;
+
+                var r = ToggleRect(n);
+                s.FillRoundedRect(Color.White, r, 3f);
+                s.DrawRoundedRect(DiagramStyle.EdgeColor, 1f, r, 3f);
+
+                float cy = r.Y + r.Height / 2f;
+                s.DrawLine(DiagramStyle.EdgeColor, 1.4f, r.X + 3.5f, cy, r.Right - 3.5f, cy, false);
+                if (collapsed)
+                {
+                    float cx = r.X + r.Width / 2f;
+                    s.DrawLine(DiagramStyle.EdgeColor, 1.4f, cx, r.Y + 3.5f, cx, r.Bottom - 3.5f, false);
+                }
+            }
         }
 
         /// <summary>
@@ -146,7 +183,8 @@ namespace DataverseProcessMapper.Rendering
         private static void DrawNodeText(IDiagramSurface s, ProcessNode node, NodeStyle style)
         {
             var r = node.Bounds;
-            bool hasSub = !string.IsNullOrEmpty(node.Subtitle);
+            var subtitle = node.DisplaySubtitle;
+            bool hasSub = !string.IsNullOrEmpty(subtitle);
             int lineCount = node.Lines.Count + (hasSub ? 1 : 0);
             float blockHeight = node.Lines.Count * DiagramStyle.LineHeight +
                                 (hasSub ? DiagramStyle.SubtitleLineHeight : 0);
@@ -162,9 +200,9 @@ namespace DataverseProcessMapper.Rendering
 
             if (hasSub)
             {
-                var size = s.MeasureString(node.Subtitle, DiagramStyle.SubtitleFont);
+                var size = s.MeasureString(subtitle, DiagramStyle.SubtitleFont);
                 float x = r.X + (r.Width - size.Width) / 2f;
-                s.DrawString(node.Subtitle, DiagramStyle.SubtitleFont, style.SubtitleText, x, y);
+                s.DrawString(subtitle, DiagramStyle.SubtitleFont, style.SubtitleText, x, y);
             }
         }
 

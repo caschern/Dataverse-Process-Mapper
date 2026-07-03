@@ -51,6 +51,19 @@ namespace DataverseProcessMapper.Models
 
         /// <summary>Ordered label/value pairs describing what the step does (inputs, expressions).</summary>
         public List<KeyValuePair<string, string>> Details { get; set; } = new List<KeyValuePair<string, string>>();
+
+        // --- view state (containers in the interactive preview) ---
+
+        /// <summary>True when this container's descendants are hidden in the view.</summary>
+        public bool Collapsed { get; set; }
+
+        /// <summary>Descendants hidden behind this node in the current view (0 = none).</summary>
+        public int HiddenCount { get; set; }
+
+        /// <summary>Subtitle including the hidden-step count when collapsed.</summary>
+        public string DisplaySubtitle => HiddenCount > 0
+            ? (string.IsNullOrEmpty(Subtitle) ? "" : Subtitle + " · ") + HiddenCount + " hidden"
+            : Subtitle;
     }
 
     /// <summary>A directed connector between two nodes.</summary>
@@ -93,6 +106,13 @@ namespace DataverseProcessMapper.Models
             Nodes.Add(node);
             _byId[id] = node;
             return node;
+        }
+
+        /// <summary>Adds an existing node instance (used when deriving view graphs).</summary>
+        public void AddExisting(ProcessNode node)
+        {
+            Nodes.Add(node);
+            _byId[node.Id] = node;
         }
 
         public ProcessEdge AddEdge(string fromId, string toId, string label = null, bool dashed = false)
