@@ -23,11 +23,35 @@ namespace DataverseProcessMapper.UI
         /// <summary>Raised when the user clicks a node (null when the selection is cleared).</summary>
         public event Action<ProcessNode> NodeSelected;
 
+        /// <summary>Raised when the user enters or leaves full-screen mode.</summary>
+        public event Action<bool> FullScreenChanged;
+
+        /// <summary>True while the process list is hidden to give the map the full width.</summary>
+        public bool IsFullScreen { get; private set; }
+
         public DiagramPanel()
         {
             DoubleBuffered = true;
             AutoScroll = true;
             BackColor = Color.FromArgb(245, 246, 248);
+            SetStyle(ControlStyles.Selectable, true); // needed for Esc to exit full screen
+            TabStop = true;
+        }
+
+        public void ToggleFullScreen()
+        {
+            IsFullScreen = !IsFullScreen;
+            FullScreenChanged?.Invoke(IsFullScreen);
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+            if (e.KeyCode == Keys.Escape && IsFullScreen)
+            {
+                ToggleFullScreen();
+                e.Handled = true;
+            }
         }
 
         public float Zoom
@@ -124,7 +148,8 @@ namespace DataverseProcessMapper.UI
             g.FillRectangle(Brushes.White, 0, 0, _map.CanvasSize.Width, _map.CanvasSize.Height);
 
             using (var surface = new GdiDiagramSurface(g))
-                DiagramRenderer.Render(surface, _map.ViewGraph, _map.CanvasSize, interactive: true);
+                DiagramRenderer.Render(surface, _map.ViewGraph, _map.CanvasSize,
+                    interactive: true, highlightId: _selectedId);
 
             // Selection highlight, drawn in diagram coordinates on top of everything.
             if (_selectedId != null)
