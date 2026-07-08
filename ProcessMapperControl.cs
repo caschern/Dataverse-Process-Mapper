@@ -51,6 +51,8 @@ namespace DataverseProcessMapper
         private DiagramPanel _workflowPanel;
         private NodeDetailsPane _flowDetails;
         private NodeDetailsPane _workflowDetails;
+        private SplitContainer _flowSplit;
+        private SplitContainer _workflowSplit;
 
         // Master (unfiltered) lists backing the search boxes.
         private List<ProcessItem> _allFlows = new List<ProcessItem>();
@@ -145,21 +147,27 @@ namespace DataverseProcessMapper
             _flowSearch = CreateSearchBox();
             _flowPanel = new DiagramPanel { Dock = DockStyle.Fill };
             _flowDetails = new NodeDetailsPane();
-            flowTab.Controls.Add(CreateSplit(WrapWithSearch(_flowSearch, _flowList),
-                WrapWithDetails(_flowPanel, _flowDetails)));
+            _flowSplit = CreateSplit(WrapWithSearch(_flowSearch, _flowList),
+                WrapWithDetails(_flowPanel, _flowDetails));
+            flowTab.Controls.Add(_flowSplit);
 
             var wfTab = new TabPage("Classic Workflows");
             _workflowList = CreateList(flowColumns: false);
             _workflowSearch = CreateSearchBox();
             _workflowPanel = new DiagramPanel { Dock = DockStyle.Fill };
             _workflowDetails = new NodeDetailsPane();
-            wfTab.Controls.Add(CreateSplit(WrapWithSearch(_workflowSearch, _workflowList),
-                WrapWithDetails(_workflowPanel, _workflowDetails)));
+            _workflowSplit = CreateSplit(WrapWithSearch(_workflowSearch, _workflowList),
+                WrapWithDetails(_workflowPanel, _workflowDetails));
+            wfTab.Controls.Add(_workflowSplit);
 
             _flowPanel.NodeSelected += n => _flowDetails.SetNode(n);
             _workflowPanel.NodeSelected += n => _workflowDetails.SetNode(n);
             _flowDetails.FetchXmlRequested += OpenInFetchXmlBuilder;
             _workflowDetails.FetchXmlRequested += OpenInFetchXmlBuilder;
+
+            // Full screen: hide the process list so the map + details own the width.
+            _flowPanel.FullScreenChanged += full => _flowSplit.Panel1Collapsed = full;
+            _workflowPanel.FullScreenChanged += full => _workflowSplit.Panel1Collapsed = full;
 
             _flowList.SelectedIndexChanged += (s, e) => PreviewSelection(_flowList, _flowPanel);
             _workflowList.SelectedIndexChanged += (s, e) => PreviewSelection(_workflowList, _workflowPanel);
@@ -198,7 +206,37 @@ namespace DataverseProcessMapper
             details.Dock = DockStyle.Right;
             details.Width = 260;
             var splitter = new Splitter { Dock = DockStyle.Right, Width = 5 };
-            host.Controls.Add(diagram);
+
+            // The button lives in a NON-scrolling wrapper around the diagram, so
+            // it stays pinned to the top-right corner while the map scrolls.
+            var mapArea = new Panel { Dock = DockStyle.Fill };
+            var fullScreenButton = new Button
+            {
+                Text = "Full screen",
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                UseVisualStyleBackColor = false,
+                TabStop = false
+            };
+            fullScreenButton.FlatAppearance.BorderColor = Color.FromArgb(200, 205, 212);
+            fullScreenButton.Click += (s, e) => diagram.ToggleFullScreen();
+            diagram.FullScreenChanged += full =>
+                fullScreenButton.Text = full ? "Exit full screen" : "Full screen";
+
+            void PositionButton() => fullScreenButton.Location = new Point(
+                mapArea.ClientSize.Width - fullScreenButton.Width - 8
+                    - SystemInformation.VerticalScrollBarWidth, 8);
+            mapArea.Resize += (s, e) => PositionButton();
+            fullScreenButton.SizeChanged += (s, e) => PositionButton();
+
+            mapArea.Controls.Add(fullScreenButton);
+            mapArea.Controls.Add(diagram);
+            fullScreenButton.BringToFront();
+            PositionButton();
+
+            host.Controls.Add(mapArea);
             host.Controls.Add(splitter);
             host.Controls.Add(details);
             return host;

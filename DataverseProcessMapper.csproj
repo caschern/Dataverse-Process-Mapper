@@ -23,9 +23,15 @@
     <Company>Cristian Casas</Company>
     <Authors>Cristian Casas</Authors>
     <Product>Dataverse Process Mapper</Product>
-    <Version>1.0.20</Version>
+    <Version>1.0.21</Version>
     <Description>Visualize Dataverse workflows and Power Automate flows as interactive, collapsible process maps with step details and PDF/HTML/SVG/PNG export.</Description>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The test project lives in a subfolder; keep it out of this assembly. -->
+    <Compile Remove="Tests\**" />
+    <None Remove="Tests\**" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- MEF (the XrmToolBox plugin discovery mechanism) -->

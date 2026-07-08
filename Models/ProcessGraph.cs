@@ -79,6 +79,14 @@ namespace DataverseProcessMapper.Models
 
         /// <summary>True when this edge points "backwards" (a loop) — routed to the side.</summary>
         public bool IsBack { get; set; }
+
+        // --- assigned by the layout engine's routing pass ---
+
+        /// <summary>Absolute Y of this edge's horizontal run (null = midpoint fallback).</summary>
+        public float? LaneY { get; set; }
+
+        /// <summary>Absolute X of the right-hand rail for back edges (null = local fallback).</summary>
+        public float? RailX { get; set; }
     }
 
     public class ProcessGraph

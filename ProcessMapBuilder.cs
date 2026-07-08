@@ -78,6 +78,9 @@ namespace DataverseProcessMapper
                     b.X += shift;
                     n.Bounds = b;
                 }
+                // Routed rails are absolute X values — they move with the nodes.
+                foreach (var e in graph.Edges)
+                    if (e.RailX.HasValue) e.RailX += shift;
                 return new SizeF(needed, canvas.Height);
             }
         }

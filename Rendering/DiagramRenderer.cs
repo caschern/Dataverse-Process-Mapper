@@ -13,15 +13,40 @@ namespace DataverseProcessMapper.Rendering
     /// </summary>
     public static class DiagramRenderer
     {
+        // Selection highlighting: the selected node's edges pop, everything else recedes.
+        private static readonly Color HighlightEdgeColor = Color.FromArgb(37, 118, 220);
+        private static readonly Color DimEdgeColor = Color.FromArgb(214, 218, 224);
+        private static readonly Color DimLabelColor = Color.FromArgb(196, 201, 208);
+
         public static void Render(IDiagramSurface surface, ProcessGraph graph, SizeF canvas,
-            bool interactive = false)
+            bool interactive = false, string highlightId = null)
         {
             DrawTitle(surface, graph, canvas);
 
+            bool highlight = interactive && !string.IsNullOrEmpty(highlightId);
             var lanes = AssignEdgeLanes(graph);
             var labels = new List<EdgeLabel>();
-            foreach (var edge in graph.Edges)
-                DrawEdge(surface, graph, edge, lanes.TryGetValue(edge, out var off) ? off : 0f, labels);
+
+            // Highlighted edges draw last so they sit on top of dimmed ones.
+            IEnumerable<ProcessEdge> ordered = graph.Edges;
+            if (highlight)
+                ordered = graph.Edges
+                    .OrderBy(e => e.FromId == highlightId || e.ToId == highlightId ? 1 : 0);
+
+            foreach (var edge in ordered)
+            {
+                bool incident = highlight && (edge.FromId == highlightId || edge.ToId == highlightId);
+                var stroke = highlight
+                    ? (incident ? HighlightEdgeColor : DimEdgeColor)
+                    : DiagramStyle.EdgeColor;
+                var labelColor = highlight
+                    ? (incident ? DiagramStyle.EdgeLabelColor : DimLabelColor)
+                    : DiagramStyle.EdgeLabelColor;
+                float width = incident ? 2.2f : 1.4f;
+
+                DrawEdge(surface, graph, edge, lanes.TryGetValue(edge, out var off) ? off : 0f,
+                    labels, stroke, width, labelColor);
+            }
 
             foreach (var node in graph.Nodes)
                 DrawNode(surface, node);
@@ -48,7 +73,7 @@ namespace DataverseProcessMapper.Rendering
             foreach (var label in labels)
             {
                 surface.FillRoundedRect(Color.White, label.Backing, 3f);
-                surface.DrawString(label.Text, DiagramStyle.EdgeLabelFont, DiagramStyle.EdgeLabelColor,
+                surface.DrawString(label.Text, DiagramStyle.EdgeLabelFont, label.Color,
                     label.Backing.X + 3f, label.Backing.Y + 1f);
             }
         }
@@ -57,6 +82,7 @@ namespace DataverseProcessMapper.Rendering
         {
             public string Text;
             public RectangleF Backing;
+            public Color Color;
         }
 
         // ---------- expand/collapse glyphs ----------
@@ -220,7 +246,7 @@ namespace DataverseProcessMapper.Rendering
         // ---------- edges ----------
 
         private static void DrawEdge(IDiagramSurface s, ProcessGraph graph, ProcessEdge edge, float laneOffset,
-            List<EdgeLabel> labels)
+            List<EdgeLabel> labels, Color stroke, float width, Color labelColor)
         {
             var from = graph[edge.FromId];
             var to = graph[edge.ToId];
@@ -231,10 +257,10 @@ namespace DataverseProcessMapper.Rendering
 
             if (edge.IsBack)
             {
-                // Route loop edges down the right-hand side.
+                // Route loop edges down the right-hand side, on their assigned rail.
                 start = new PointF(from.Bounds.Right, from.Bounds.Y + from.Bounds.Height / 2f);
                 end = new PointF(to.Bounds.Right, to.Bounds.Y + to.Bounds.Height / 2f);
-                float bend = Math.Max(from.Bounds.Right, to.Bounds.Right) + 30f;
+                float bend = edge.RailX ?? (Math.Max(from.Bounds.Right, to.Bounds.Right) + 30f);
                 path = new[]
                 {
                     start,
@@ -255,9 +281,9 @@ namespace DataverseProcessMapper.Rendering
                 }
                 else
                 {
-                    // Orthogonal V-H-V route: drop to a midpoint, run across, drop in.
-                    // The lane offset spreads parallel runs in the same gap apart.
-                    float midY = (start.Y + end.Y) / 2f + laneOffset;
+                    // Orthogonal V-H-V route on the lane assigned by the layout
+                    // engine's routing pass; midpoint + offset as a fallback.
+                    float midY = edge.LaneY ?? ((start.Y + end.Y) / 2f + laneOffset);
                     path = new[]
                     {
                         start,
@@ -269,10 +295,10 @@ namespace DataverseProcessMapper.Rendering
             }
 
             for (int i = 0; i < path.Length - 1; i++)
-                s.DrawLine(DiagramStyle.EdgeColor, 1.4f, path[i].X, path[i].Y, path[i + 1].X, path[i + 1].Y,
+                s.DrawLine(stroke, width, path[i].X, path[i].Y, path[i + 1].X, path[i + 1].Y,
                     edge.Dashed || edge.IsBack);
 
-            DrawArrowHead(s, path[path.Length - 2], path[path.Length - 1]);
+            DrawArrowHead(s, path[path.Length - 2], path[path.Length - 1], stroke);
 
             if (!string.IsNullOrEmpty(edge.Label))
             {
@@ -291,12 +317,13 @@ namespace DataverseProcessMapper.Rendering
                 labels.Add(new EdgeLabel
                 {
                     Text = edge.Label,
-                    Backing = new RectangleF(lx - 3f, ly - 1f, size.Width + 6f, size.Height + 2f)
+                    Backing = new RectangleF(lx - 3f, ly - 1f, size.Width + 6f, size.Height + 2f),
+                    Color = labelColor
                 });
             }
         }
 
-        private static void DrawArrowHead(IDiagramSurface s, PointF from, PointF to)
+        private static void DrawArrowHead(IDiagramSurface s, PointF from, PointF to, Color color)
         {
             const float len = 9f;
             const float halfWidth = 4.5f;
@@ -317,7 +344,7 @@ namespace DataverseProcessMapper.Rendering
             var p2 = new PointF((float)(baseX + px * halfWidth), (float)(baseY + py * halfWidth));
             var p3 = new PointF((float)(baseX - px * halfWidth), (float)(baseY - py * halfWidth));
 
-            s.FillPolygon(DiagramStyle.EdgeColor, new[] { p1, p2, p3 });
+            s.FillPolygon(color, new[] { p1, p2, p3 });
         }
     }
 }

@@ -4,7 +4,8 @@
 
 /.vs
 /dist
-/bin
-/obj
+bin/
+obj/
 *.user
 *.nupkg
+TestResults/
