@@ -192,6 +192,38 @@ namespace DataverseProcessMapper.Tests
         }
 
         [Fact]
+        public void MultiRankEdge_RoutesAroundNodesInItsColumn()
+        {
+            // a -> b -> c plus a skip edge a -> c. The skip edge's virtual node
+            // reserves a channel beside b, so no vertical segment of its route
+            // may pass through b's box.
+            var g = new ProcessGraph { Title = "route" };
+            g.AddNode("A", NodeKind.Action, NodeShape.RoundedRect, id: "a");
+            g.AddNode("B", NodeKind.Action, NodeShape.RoundedRect, id: "b");
+            g.AddNode("C", NodeKind.Action, NodeShape.RoundedRect, id: "c");
+            g.AddEdge("a", "b");
+            g.AddEdge("b", "c");
+            g.AddEdge("a", "c");
+            Layout(g);
+
+            var skip = g.Edges.Single(e => e.FromId == "a" && e.ToId == "c");
+            Assert.NotNull(skip.Route);
+            Assert.True(skip.Route.Count >= 2, "route must be a drawable polyline");
+
+            var blocker = g["b"].Bounds;
+            for (int i = 0; i < skip.Route.Count - 1; i++)
+            {
+                var p = skip.Route[i];
+                var q = skip.Route[i + 1];
+                if (Math.Abs(p.X - q.X) > 0.01f) continue; // only vertical segments matter
+                bool inX = p.X > blocker.X - 1f && p.X < blocker.Right + 1f;
+                bool inY = Math.Max(p.Y, q.Y) > blocker.Y && Math.Min(p.Y, q.Y) < blocker.Bottom;
+                Assert.False(inX && inY,
+                    $"vertical at x={p.X} passes through B [{blocker.X}..{blocker.Right}]");
+            }
+        }
+
+        [Fact]
         public void OverlappingBackEdges_GetDistinctRails()
         {
             var g = new ProcessGraph { Title = "loops" };

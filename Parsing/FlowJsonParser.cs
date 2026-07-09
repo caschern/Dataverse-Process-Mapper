@@ -381,6 +381,15 @@ namespace DataverseProcessMapper.Parsing
             // The default (implicit) is "Succeeded"; only surface non-default flows.
             if (statuses.Count == 1 && statuses[0].Equals("Succeeded", StringComparison.OrdinalIgnoreCase))
                 return null;
+
+            // All four statuses = "run regardless of outcome" — one word, not four.
+            if (statuses.Count == 4 &&
+                statuses.Contains("Succeeded", StringComparer.OrdinalIgnoreCase) &&
+                statuses.Contains("Failed", StringComparer.OrdinalIgnoreCase) &&
+                statuses.Contains("Skipped", StringComparer.OrdinalIgnoreCase) &&
+                statuses.Contains("TimedOut", StringComparer.OrdinalIgnoreCase))
+                return "always";
+
             return string.Join("/", statuses);
         }
 

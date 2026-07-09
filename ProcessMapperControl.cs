@@ -40,6 +40,7 @@ namespace DataverseProcessMapper
         private ToolStripButton _pngButton;
         private ToolStripButton _exportAllButton;
         private ToolStripButton _fitButton;
+        private ToolStripTextBox _findBox;
         private ToolStripLabel _status;
 
         private TabControl _tabs;
@@ -122,6 +123,20 @@ namespace DataverseProcessMapper
             };
             _fitButton.Click += (s, e) => CurrentPanel()?.ZoomToFit();
 
+            _findBox = new ToolStripTextBox { Width = 170, ToolTipText = "Find a step by name (Enter = next match)" };
+            _findBox.TextBox.HandleCreated += (s, e) =>
+                SendMessage(_findBox.TextBox.Handle, EM_SETCUEBANNER, (IntPtr)1, "Find step…");
+            _findBox.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                    if (CurrentPanel()?.FindNext(_findBox.Text) != true)
+                        System.Media.SystemSounds.Asterisk.Play(); // no match
+                }
+            };
+
             var closeButton = new ToolStripButton("Close")
             {
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
@@ -136,7 +151,7 @@ namespace DataverseProcessMapper
                 _loadButton, new ToolStripSeparator(),
                 _pdfButton, _htmlButton, _svgButton, _pngButton, new ToolStripSeparator(),
                 _exportAllButton, new ToolStripSeparator(),
-                _fitButton, new ToolStripSeparator(),
+                _fitButton, _findBox, new ToolStripSeparator(),
                 _status, closeButton
             });
 
@@ -210,31 +225,62 @@ namespace DataverseProcessMapper
             // The button lives in a NON-scrolling wrapper around the diagram, so
             // it stays pinned to the top-right corner while the map scrolls.
             var mapArea = new Panel { Dock = DockStyle.Fill };
-            var fullScreenButton = new Button
+
+            Button OverlayButton(string text)
             {
-                Text = "Full screen",
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.White,
-                UseVisualStyleBackColor = false,
-                TabStop = false
-            };
-            fullScreenButton.FlatAppearance.BorderColor = Color.FromArgb(200, 205, 212);
+                var b = new Button
+                {
+                    Text = text,
+                    AutoSize = true,
+                    AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.White,
+                    UseVisualStyleBackColor = false,
+                    TabStop = false
+                };
+                b.FlatAppearance.BorderColor = Color.FromArgb(200, 205, 212);
+                return b;
+            }
+
+            var fullScreenButton = OverlayButton("Full screen");
             fullScreenButton.Click += (s, e) => diagram.ToggleFullScreen();
             diagram.FullScreenChanged += full =>
                 fullScreenButton.Text = full ? "Exit full screen" : "Full screen";
 
-            void PositionButton() => fullScreenButton.Location = new Point(
-                mapArea.ClientSize.Width - fullScreenButton.Width - 8
-                    - SystemInformation.VerticalScrollBarWidth, 8);
-            mapArea.Resize += (s, e) => PositionButton();
-            fullScreenButton.SizeChanged += (s, e) => PositionButton();
+            var zoomInButton = OverlayButton("+");
+            zoomInButton.Click += (s, e) => diagram.ZoomStep(1.2f);
+            var zoomOutButton = OverlayButton("−");
+            zoomOutButton.Click += (s, e) => diagram.ZoomStep(1f / 1.2f);
+
+            var expandAllButton = OverlayButton("Expand all");
+            expandAllButton.Click += (s, e) => diagram.SetAllCollapsed(false);
+            var collapseAllButton = OverlayButton("Collapse all");
+            collapseAllButton.Click += (s, e) => diagram.SetAllCollapsed(true);
+
+            void PositionButtons()
+            {
+                int right = mapArea.ClientSize.Width - 8 - SystemInformation.VerticalScrollBarWidth;
+                fullScreenButton.Location = new Point(right - fullScreenButton.Width, 8);
+                zoomInButton.Location = new Point(fullScreenButton.Left - zoomInButton.Width - 6, 8);
+                zoomOutButton.Location = new Point(zoomInButton.Left - zoomOutButton.Width - 2, 8);
+                expandAllButton.Location = new Point(zoomOutButton.Left - expandAllButton.Width - 6, 8);
+                collapseAllButton.Location = new Point(expandAllButton.Left - collapseAllButton.Width - 2, 8);
+            }
+            mapArea.Resize += (s, e) => PositionButtons();
+            fullScreenButton.SizeChanged += (s, e) => PositionButtons();
 
             mapArea.Controls.Add(fullScreenButton);
+            mapArea.Controls.Add(zoomInButton);
+            mapArea.Controls.Add(zoomOutButton);
+            mapArea.Controls.Add(expandAllButton);
+            mapArea.Controls.Add(collapseAllButton);
             mapArea.Controls.Add(diagram);
             fullScreenButton.BringToFront();
-            PositionButton();
+            zoomInButton.BringToFront();
+            zoomOutButton.BringToFront();
+            expandAllButton.BringToFront();
+            collapseAllButton.BringToFront();
+            PositionButtons();
 
             host.Controls.Add(mapArea);
             host.Controls.Add(splitter);
