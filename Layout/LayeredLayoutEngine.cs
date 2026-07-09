@@ -20,13 +20,117 @@ namespace DataverseProcessMapper.Layout
         {
             if (graph.Nodes.Count == 0) return new SizeF(200, 100);
 
+            foreach (var e in graph.Edges)
+            {
+                e.LaneY = null;
+                e.RailX = null;
+                e.Route = null;
+            }
+
             var outgoing = BuildAdjacency(graph);
             MarkBackEdges(graph, outgoing);
 
             var forward = graph.Edges.Where(e => !e.IsBack).ToList();
             AssignRanks(graph, forward);
-            var ranks = OrderRanks(graph, forward);
-            return Position(graph, ranks);
+
+            // Full Sugiyama edge routing: an edge spanning several ranks is
+            // split into per-gap segments joined by virtual waypoint nodes.
+            // The virtuals take part in ordering and alignment, reserving a
+            // clear channel through every rank the edge crosses.
+            var virtuals = new List<ProcessNode>();
+            var chains = new List<Chain>();
+            var layoutForward = BuildLayoutEdges(graph, forward, virtuals, chains);
+            var allNodes = graph.Nodes.Concat(virtuals).ToList();
+            var byId = allNodes.ToDictionary(n => n.Id);
+
+            var ranks = OrderRanks(graph, allNodes, layoutForward);
+            return Position(graph, ranks, layoutForward, byId, chains);
+        }
+
+        private const float VirtualWidth = 10f;
+
+        private class Chain
+        {
+            public ProcessEdge Original;
+            public List<ProcessNode> Vias = new List<ProcessNode>();
+            public List<ProcessEdge> Segments = new List<ProcessEdge>();
+        }
+
+        /// <summary>
+        /// Splits multi-rank forward edges into chains of adjacent-rank segments
+        /// joined by virtual nodes; adjacent edges pass through unchanged.
+        /// </summary>
+        private static List<ProcessEdge> BuildLayoutEdges(ProcessGraph graph, List<ProcessEdge> forward,
+            List<ProcessNode> virtuals, List<Chain> chains)
+        {
+            var layout = new List<ProcessEdge>();
+            int counter = 0;
+            foreach (var e in forward)
+            {
+                var from = graph[e.FromId];
+                var to = graph[e.ToId];
+                if (from == null || to == null) continue;
+                if (to.Rank - from.Rank <= 1)
+                {
+                    layout.Add(e);
+                    continue;
+                }
+
+                var chain = new Chain { Original = e };
+                string container = CommonContainer(graph, from, to);
+                string prev = e.FromId;
+                for (int r = from.Rank + 1; r < to.Rank; r++)
+                {
+                    var via = new ProcessNode
+                    {
+                        Id = "__v" + counter++,
+                        Label = "",
+                        Rank = r,
+                        ParentId = container, // cohesion keeps the channel inside the shared scope
+                        Bounds = new RectangleF(0f, 0f, VirtualWidth, 1f)
+                    };
+                    virtuals.Add(via);
+                    chain.Vias.Add(via);
+                    var seg = new ProcessEdge { FromId = prev, ToId = via.Id };
+                    chain.Segments.Add(seg);
+                    layout.Add(seg);
+                    prev = via.Id;
+                }
+                var lastSeg = new ProcessEdge { FromId = prev, ToId = e.ToId };
+                chain.Segments.Add(lastSeg);
+                layout.Add(lastSeg);
+                chains.Add(chain);
+            }
+            return layout;
+        }
+
+        /// <summary>The innermost container both nodes live in, or null.</summary>
+        private static string CommonContainer(ProcessGraph graph, ProcessNode a, ProcessNode b)
+        {
+            List<string> AncestorPath(ProcessNode n)
+            {
+                var path = new List<string>();
+                var cur = n.ParentId;
+                int guard = 0;
+                while (cur != null && guard++ < graph.Nodes.Count)
+                {
+                    path.Add(cur);
+                    cur = graph[cur]?.ParentId;
+                }
+                path.Reverse();
+                return path;
+            }
+
+            var pa = AncestorPath(a);
+            var pb = AncestorPath(b);
+            string common = null;
+            int len = Math.Min(pa.Count, pb.Count);
+            for (int i = 0; i < len; i++)
+            {
+                if (pa[i] == pb[i]) common = pa[i];
+                else break;
+            }
+            return common;
         }
 
         /// <summary>
@@ -35,9 +139,10 @@ namespace DataverseProcessMapper.Layout
         /// down and up a few times, so children line up under their parents and
         /// connectors don't cross.
         /// </summary>
-        private static List<List<ProcessNode>> OrderRanks(ProcessGraph graph, List<ProcessEdge> forward)
+        private static List<List<ProcessNode>> OrderRanks(ProcessGraph graph, List<ProcessNode> allNodes,
+            List<ProcessEdge> forward)
         {
-            var ranks = graph.Nodes
+            var ranks = allNodes
                 .GroupBy(n => n.Rank)
                 .OrderBy(g => g.Key)
                 .Select(g => g.ToList())
@@ -284,7 +389,8 @@ namespace DataverseProcessMapper.Layout
         private const float LaneSpacing = 10f;
         private const float LaneMinSeparation = 12f;
 
-        private static SizeF Position(ProcessGraph graph, List<List<ProcessNode>> ranks)
+        private static SizeF Position(ProcessGraph graph, List<List<ProcessNode>> ranks,
+            List<ProcessEdge> layoutForward, Dictionary<string, ProcessNode> byId, List<Chain> chains)
         {
             // Per-rank height = tallest node in that rank.
             var rankHeights = ranks.Select(r => r.Max(n => n.Bounds.Height)).ToList();
@@ -299,7 +405,7 @@ namespace DataverseProcessMapper.Layout
                     x += node.Bounds.Width + DiagramStyle.HorizontalGap;
                 }
             }
-            AlignColumns(graph, ranks);
+            AlignColumns(ranks, layoutForward, byId);
 
             // Normalize: leftmost node at the margin, canvas hugs the content.
             float minX = float.MaxValue, maxRight = float.MinValue;
@@ -326,7 +432,7 @@ namespace DataverseProcessMapper.Layout
 
             var laneOfEdge = new Dictionary<ProcessEdge, KeyValuePair<int, int>>(); // edge -> (gap, lane)
             var laneCount = new int[Math.Max(1, ranks.Count)];
-            RouteForwardEdges(graph, rankIndexByValue, laneOfEdge, laneCount);
+            RouteForwardEdges(byId, rankIndexByValue, laneOfEdge, laneCount, layoutForward);
 
             // --- Y pass: rows separated by gaps stretched to fit their lanes ---
             var rowTops = new float[ranks.Count];
@@ -360,12 +466,48 @@ namespace DataverseProcessMapper.Layout
                 kv.Key.LaneY = firstLane + lane * LaneSpacing;
             }
 
+            // --- Assemble full polylines for the virtual-node chains ---
+            BuildRoutes(graph, chains);
+
             // --- Back-edge rails: overlapping loops each get their own rail ---
             float maxRail = AssignBackEdgeRails(graph);
             if (maxRail > 0f)
                 canvasWidth = Math.Max(canvasWidth, maxRail + DiagramStyle.Margin);
 
             return new SizeF(canvasWidth, canvasHeight);
+        }
+
+        /// <summary>
+        /// Turns each chain's segment lanes and via positions into the original
+        /// edge's full polyline. Straight stretches collapse away; jogs happen
+        /// on the segments' assigned lanes.
+        /// </summary>
+        private static void BuildRoutes(ProcessGraph graph, List<Chain> chains)
+        {
+            foreach (var chain in chains)
+            {
+                var from = graph[chain.Original.FromId];
+                var to = graph[chain.Original.ToId];
+                if (from == null || to == null) continue;
+
+                var stops = new List<ProcessNode> { from };
+                stops.AddRange(chain.Vias);
+                stops.Add(to);
+
+                var pts = new List<PointF> { new PointF(CenterX(from), from.Bounds.Bottom) };
+                for (int i = 0; i < chain.Segments.Count; i++)
+                {
+                    float ax = CenterX(stops[i]);
+                    float bx = CenterX(stops[i + 1]);
+                    if (Math.Abs(ax - bx) < 0.5f) continue; // straight through this gap
+                    float laneY = chain.Segments[i].LaneY
+                        ?? (stops[i].Bounds.Bottom + stops[i + 1].Bounds.Y) / 2f;
+                    pts.Add(new PointF(ax, laneY));
+                    pts.Add(new PointF(bx, laneY));
+                }
+                pts.Add(new PointF(CenterX(to), to.Bounds.Y));
+                chain.Original.Route = pts;
+            }
         }
 
         // ---------- x-coordinate alignment ----------
@@ -378,10 +520,11 @@ namespace DataverseProcessMapper.Layout
         /// minimum spacing. Children end up underneath their parents, so most
         /// edges become straight drops instead of long horizontal runs.
         /// </summary>
-        private static void AlignColumns(ProcessGraph graph, List<List<ProcessNode>> ranks)
+        private static void AlignColumns(List<List<ProcessNode>> ranks,
+            List<ProcessEdge> layoutForward, Dictionary<string, ProcessNode> byId)
         {
-            var parents = BuildNeighborMap(graph, incoming: true);
-            var children = BuildNeighborMap(graph, incoming: false);
+            var parents = BuildNeighborMap(layoutForward, byId, incoming: true);
+            var children = BuildNeighborMap(layoutForward, byId, incoming: false);
 
             for (int sweep = 0; sweep < AlignmentSweeps; sweep++)
             {
@@ -398,15 +541,15 @@ namespace DataverseProcessMapper.Layout
             }
         }
 
-        private static Dictionary<string, List<ProcessNode>> BuildNeighborMap(ProcessGraph graph, bool incoming)
+        private static Dictionary<string, List<ProcessNode>> BuildNeighborMap(
+            List<ProcessEdge> forward, Dictionary<string, ProcessNode> byId, bool incoming)
         {
             var map = new Dictionary<string, List<ProcessNode>>();
-            foreach (var e in graph.Edges)
+            foreach (var e in forward)
             {
-                if (e.IsBack) continue;
                 var key = incoming ? e.ToId : e.FromId;
-                var other = graph[incoming ? e.FromId : e.ToId];
-                if (other == null || graph[key] == null) continue;
+                if (!byId.TryGetValue(incoming ? e.FromId : e.ToId, out var other)) continue;
+                if (!byId.ContainsKey(key)) continue;
                 if (!map.TryGetValue(key, out var list))
                     map[key] = list = new List<ProcessNode>();
                 list.Add(other);
@@ -506,34 +649,52 @@ namespace DataverseProcessMapper.Layout
         /// don't overlap horizontally, or when they share a source (fan-out) or
         /// target (fan-in) — those merge into a single visual "bus".
         /// </summary>
-        private static void RouteForwardEdges(ProcessGraph graph, Dictionary<int, int> rankIndex,
-            Dictionary<ProcessEdge, KeyValuePair<int, int>> laneOfEdge, int[] laneCount)
+        private static void RouteForwardEdges(Dictionary<string, ProcessNode> byId,
+            Dictionary<int, int> rankIndex,
+            Dictionary<ProcessEdge, KeyValuePair<int, int>> laneOfEdge, int[] laneCount,
+            List<ProcessEdge> layoutForward)
         {
             var byGap = new Dictionary<int, List<Run>>();
-            foreach (var e in graph.Edges)
+            foreach (var e in layoutForward)
             {
-                e.LaneY = null;
-                e.RailX = null;
-                if (e.IsBack) continue;
-
-                var from = graph[e.FromId];
-                var to = graph[e.ToId];
-                if (from == null || to == null) continue;
+                if (!byId.TryGetValue(e.FromId, out var from)) continue;
+                if (!byId.TryGetValue(e.ToId, out var to)) continue;
                 if (!rankIndex.TryGetValue(to.Rank, out var targetRank)) continue;
                 int gap = targetRank - 1;
                 if (gap < 0 || gap >= laneCount.Length) continue;
 
                 float sx = from.Bounds.X + from.Bounds.Width / 2f;
                 float tx = to.Bounds.X + to.Bounds.Width / 2f;
-                if (Math.Abs(sx - tx) < 0.5f) continue; // straight drop, no lane needed
+                bool straight = Math.Abs(sx - tx) < 0.5f;
+
+                // Straight drops need no routing lane — but a LABELED straight
+                // drop reserves one anyway so its chip gets its own line in the
+                // gap instead of piling up with its neighbors.
+                if (straight && string.IsNullOrEmpty(e.Label)) continue;
+
+                float left, right;
+                bool isLabel = false;
+                if (straight)
+                {
+                    float chipHalf = (e.Label.Length * 6.5f + 10f) / 2f;
+                    left = sx - chipHalf;
+                    right = sx + chipHalf;
+                    isLabel = true;
+                }
+                else
+                {
+                    left = Math.Min(sx, tx);
+                    right = Math.Max(sx, tx);
+                }
 
                 if (!byGap.TryGetValue(gap, out var list))
                     byGap[gap] = list = new List<Run>();
                 list.Add(new Run
                 {
                     Edge = e,
-                    Left = Math.Min(sx, tx),
-                    Right = Math.Max(sx, tx)
+                    Left = left,
+                    Right = right,
+                    IsLabel = isLabel
                 });
             }
 
@@ -551,8 +712,11 @@ namespace DataverseProcessMapper.Layout
                         {
                             bool overlaps = run.Left < other.Right + LaneMinSeparation &&
                                             other.Left < run.Right + LaneMinSeparation;
-                            bool sharesFlow = run.Edge.FromId == other.Edge.FromId ||
-                                              run.Edge.ToId == other.Edge.ToId;
+                            // Fan-in/fan-out edges may share a lane (they merge
+                            // into one bus) — but label chips never share.
+                            bool sharesFlow = !run.IsLabel && !other.IsLabel &&
+                                              (run.Edge.FromId == other.Edge.FromId ||
+                                               run.Edge.ToId == other.Edge.ToId);
                             if (overlaps && !sharesFlow) { fits = false; break; }
                         }
                         if (fits) laneIdx = i;
@@ -574,6 +738,7 @@ namespace DataverseProcessMapper.Layout
             public ProcessEdge Edge;
             public float Left;
             public float Right;
+            public bool IsLabel; // reserves chip space for a labeled straight drop
         }
 
         /// <summary>Assigns each back edge a right-hand rail; vertically overlapping loops get distinct rails.</summary>

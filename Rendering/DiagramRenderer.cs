@@ -55,16 +55,25 @@ namespace DataverseProcessMapper.Rendering
             if (interactive)
                 DrawToggleGlyphs(surface, graph);
 
-            // If two label chips collide, push the later one below the earlier.
+            // If two label chips collide, slide the later one to the RIGHT along
+            // its lane — pushing down would leave the node-free gap band and
+            // drop the chip onto the row below.
             for (int i = 1; i < labels.Count; i++)
             {
-                for (int j = 0; j < i; j++)
+                bool moved = true;
+                int guard = 0;
+                while (moved && guard++ < 8)
                 {
-                    if (labels[i].Backing.IntersectsWith(labels[j].Backing))
+                    moved = false;
+                    for (int j = 0; j < i; j++)
                     {
-                        var moved = labels[i];
-                        moved.Backing.Y = labels[j].Backing.Bottom + 2f;
-                        labels[i] = moved;
+                        if (labels[i].Backing.IntersectsWith(labels[j].Backing))
+                        {
+                            var shifted = labels[i];
+                            shifted.Backing.X = labels[j].Backing.Right + 4f;
+                            labels[i] = shifted;
+                            moved = true;
+                        }
                     }
                 }
             }
@@ -274,7 +283,13 @@ namespace DataverseProcessMapper.Rendering
                 start = new PointF(from.Bounds.X + from.Bounds.Width / 2f, from.Bounds.Bottom);
                 end = new PointF(to.Bounds.X + to.Bounds.Width / 2f, to.Bounds.Y);
 
-                if (Math.Abs(start.X - end.X) < 0.5f)
+                if (edge.Route != null && edge.Route.Count >= 2)
+                {
+                    // Multi-rank edge: the layout engine already routed it
+                    // through reserved channels via virtual waypoints.
+                    path = edge.Route.ToArray();
+                }
+                else if (Math.Abs(start.X - end.X) < 0.5f)
                 {
                     // Vertically aligned: a single straight drop.
                     path = new[] { start, end };
@@ -302,12 +317,24 @@ namespace DataverseProcessMapper.Rendering
 
             if (!string.IsNullOrEmpty(edge.Label))
             {
-                // Anchor the label to the middle segment of the path (the horizontal
-                // run on orthogonal routes) so it sits on the connector.
-                int seg = (path.Length - 1) / 2;
-                var mid = new PointF(
-                    (path[seg].X + path[seg + 1].X) / 2f,
-                    (path[seg].Y + path[seg + 1].Y) / 2f);
+                // Anchor the label to the FIRST horizontal run of the path: those
+                // lie in the gaps between rows, which are guaranteed node-free.
+                // A vertical mid-segment (multi-rank routes) would drop the chip
+                // on top of node boxes.
+                var mid = default(PointF);
+                bool found = false;
+                for (int i = 0; i < path.Length - 1 && !found; i++)
+                {
+                    if (Math.Abs(path[i].Y - path[i + 1].Y) < 0.01f &&
+                        Math.Abs(path[i].X - path[i + 1].X) >= 0.5f)
+                    {
+                        mid = new PointF((path[i].X + path[i + 1].X) / 2f, path[i].Y);
+                        found = true;
+                    }
+                }
+                if (!found)
+                    mid = new PointF(path[0].X, edge.LaneY ?? (path[0].Y + 14f)); // its reserved label lane
+
                 var size = s.MeasureString(edge.Label, DiagramStyle.EdgeLabelFont);
 
                 // Centered on the connector; queued and drawn after all edges

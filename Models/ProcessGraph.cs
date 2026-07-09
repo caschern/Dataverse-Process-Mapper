@@ -87,6 +87,12 @@ namespace DataverseProcessMapper.Models
 
         /// <summary>Absolute X of the right-hand rail for back edges (null = local fallback).</summary>
         public float? RailX { get; set; }
+
+        /// <summary>
+        /// Full polyline for edges spanning multiple ranks, routed through the
+        /// layout engine's virtual waypoints (null = simple direct route).
+        /// </summary>
+        public List<PointF> Route { get; set; }
     }
 
     public class ProcessGraph
