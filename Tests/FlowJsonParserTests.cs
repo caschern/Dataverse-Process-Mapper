@@ -93,6 +93,37 @@ namespace DataverseProcessMapper.Tests
         }
 
         [Fact]
+        public void TriggerConditions_AreSurfacedInDetails()
+        {
+            // "conditions" is a sibling of inputs on the trigger, not inside it.
+            var item = new ProcessItem
+            {
+                Name = "Conditioned Flow",
+                Category = 5,
+                ClientData = @"{""properties"":{""definition"":{
+                  ""triggers"": { ""When_updated"": {
+                      ""type"": ""OpenApiConnectionWebhook"",
+                      ""conditions"": [
+                        { ""expression"": ""@equals(triggerOutputs()?['body/statecode'], 0)"" },
+                        { ""expression"": ""@not(empty(triggerOutputs()?['body/name']))"" }
+                      ],
+                      ""splitOn"": ""@triggerOutputs()?['body/value']"" } },
+                  ""actions"": { ""Step"": { ""type"": ""Compose"", ""inputs"": ""1"", ""runAfter"": {} } }
+                }}}"
+            };
+
+            var g = new FlowJsonParser().Parse(item);
+            var trigger = g.Nodes.Single(n => n.Label == "When updated");
+
+            Assert.Contains(trigger.Details, d =>
+                d.Key == "Trigger condition 1" && d.Value.Contains("statecode"));
+            Assert.Contains(trigger.Details, d =>
+                d.Key == "Trigger condition 2" && d.Value.Contains("empty"));
+            Assert.Contains(trigger.Details, d =>
+                d.Key == "Split on" && d.Value.Contains("body/value"));
+        }
+
+        [Fact]
         public void CollapsedScope_HidesDescendants_AndReanchorsEdges()
         {
             var g = Parse();

@@ -288,6 +288,23 @@ namespace DataverseProcessMapper.Parsing
                 if (recurrence != null)
                     Add("Recurrence", ("every " + recurrence["interval"] + " " + recurrence["frequency"]).Trim());
 
+                // Trigger conditions (Settings > Trigger conditions) are a bare
+                // "conditions" array on the trigger itself — NOT under inputs.
+                var conditions = body["conditions"] as JArray;
+                if (conditions != null && conditions.Count > 0)
+                {
+                    int index = 0;
+                    foreach (var c in conditions)
+                    {
+                        index++;
+                        var expression = (c as JObject)?["expression"]?.ToString() ?? Compact(c);
+                        Add(conditions.Count == 1 ? "Trigger condition" : "Trigger condition " + index,
+                            expression);
+                    }
+                }
+
+                Add("Split on", body["splitOn"]?.ToString());
+
                 var runAfter = body["runAfter"] as JObject;
                 if (runAfter != null && runAfter.Count > 0)
                     Add("Runs after", string.Join(", ", runAfter.Properties().Select(p => p.Name.Replace('_', ' '))));
