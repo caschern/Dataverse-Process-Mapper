@@ -177,10 +177,27 @@ namespace DataverseProcessMapper.Layout
         /// members' mean barycenter (recursively for nested containers). Stops
         /// the children of different scopes/branches interleaving even when
         /// their raw barycenters do.
+        ///
+        /// Membership of a parallel region acts as one more grouping key, below
+        /// the containers, so a region's branches stay together instead of being
+        /// separated by unrelated siblings. This only reorders nodes within their
+        /// own rank — an axis that carries no meaning in the diagram, unlike the
+        /// vertical axis which says "later" — so it changes nothing the map asserts.
         /// </summary>
         private static void ApplyContainerCohesion(ProcessGraph graph, List<List<ProcessNode>> ranks,
             Dictionary<string, List<string>> parents, Dictionary<string, int> order)
         {
+            var blockOf = new Dictionary<string, string>();
+            if (graph.ParallelBlocks != null)
+            {
+                foreach (var block in graph.ParallelBlocks)
+                {
+                    var key = "block:" + block.EntryId + "->" + block.ExitId;
+                    foreach (var id in block.AllMemberIds)
+                        blockOf[id] = key;
+                }
+            }
+
             var pathCache = new Dictionary<string, List<string>>();
             List<string> PathOf(ProcessNode node)
             {
@@ -194,6 +211,8 @@ namespace DataverseProcessMapper.Layout
                     cur = graph[cur]?.ParentId;
                 }
                 path.Reverse(); // outermost container first
+                if (blockOf.TryGetValue(node.Id, out var blockKey))
+                    path.Add(blockKey); // innermost key: siblings first, then region
                 pathCache[node.Id] = path;
                 return path;
             }
