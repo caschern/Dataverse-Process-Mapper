@@ -170,19 +170,22 @@ namespace DataverseProcessMapper.Parsing
                 return;
             }
 
-            // Switch: "cases": { caseName: { "actions": ... } }, "default": { "actions": ... }
+            // Switch: "cases": { key: { "case": <value>, "actions": … } }, "default": { "actions": … }
             var cases = body["cases"] as JObject;
             if (cases != null)
             {
                 foreach (var c in cases.Properties())
                 {
-                    var caseActions = (c.Value as JObject)?["actions"] as JObject;
-                    if (caseActions != null && caseActions.Count > 0)
-                        AddActions(graph, caseActions, new[] { controlId }, idPrefix + "_" + Sanitize(c.Name), controlId);
+                    var caseObj = c.Value as JObject;
+                    AddCaseBranch(graph, caseObj?["actions"] as JObject, controlId,
+                        CaseLabel(caseObj, c.Name), idPrefix + "_" + Sanitize(c.Name));
                 }
-                var defActions = (body["default"] as JObject)?["actions"] as JObject;
-                if (defActions != null && defActions.Count > 0)
-                    AddActions(graph, defActions, new[] { controlId }, idPrefix + "_default", controlId);
+
+                // Drawn whenever the default branch is declared, even when it is empty.
+                var defaultObj = body["default"] as JObject;
+                if (defaultObj != null)
+                    AddCaseBranch(graph, defaultObj["actions"] as JObject, controlId,
+                        "default", idPrefix + "_default");
                 return;
             }
 
@@ -191,11 +194,60 @@ namespace DataverseProcessMapper.Parsing
             {
                 AddActions(graph, trueBranch, new[] { controlId }, idPrefix + "_body", controlId);
             }
+            else if (IsControlType(type))
+            {
+                // A container that declares no actions still says so out loud.
+                AddEmptyMarker(graph, controlId, idPrefix + "_body");
+            }
+        }
+
+        /// <summary>
+        /// Adds one switch branch: a chip node carrying the value the case matches,
+        /// with that case's actions beneath it. A declared case with no actions still
+        /// gets its chip plus an empty marker, so a branch that exists in the flow is
+        /// never silently missing from the map.
+        /// </summary>
+        private void AddCaseBranch(ProcessGraph graph, JObject actions, string switchId, string label, string idPrefix)
+        {
+            var chip = graph.AddNode(label, NodeKind.Case, NodeShape.Stadium, id: idPrefix + "::case");
+            chip.ParentId = switchId;
+            graph.AddEdge(switchId, chip.Id);
+
+            if (actions != null && actions.Count > 0)
+                AddActions(graph, actions, new[] { chip.Id }, idPrefix, chip.Id);
+            else
+                AddEmptyMarker(graph, chip.Id, idPrefix);
+        }
+
+        /// <summary>Explicit "this branch does nothing" node, so empty branches stay visible.</summary>
+        private static ProcessNode AddEmptyMarker(ProcessGraph graph, string parentId, string idPrefix, string edgeLabel = null)
+        {
+            var node = graph.AddNode("(no actions)", NodeKind.Empty, NodeShape.RoundedRect,
+                id: idPrefix + "::empty");
+            node.ParentId = parentId;
+            graph.AddEdge(parentId, node.Id, edgeLabel);
+            return node;
+        }
+
+        /// <summary>
+        /// The value a case matches on. Power Automate stores it in the case's own
+        /// "case" property; the property name ("Case", "Case_2") is only a
+        /// designer-generated key, so it serves purely as a fallback.
+        /// </summary>
+        private static string CaseLabel(JObject caseObj, string key)
+        {
+            var value = caseObj?["case"];
+            if (value != null && value.Type != JTokenType.Null)
+            {
+                var text = Compact(value);
+                if (!string.IsNullOrWhiteSpace(text)) return text;
+            }
+            return Humanize(key);
         }
 
         private void LinkBranchPlaceholder(ProcessGraph graph, string controlId, string label, string idPrefix)
         {
-            // Empty branch: nothing to draw. (Kept as a hook for future "no-op" nodes.)
+            AddEmptyMarker(graph, controlId, idPrefix, label);
         }
 
         private void LabelFirstEdges(ProcessGraph graph, string controlId, string branchPrefix, string label)

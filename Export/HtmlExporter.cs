@@ -238,6 +238,8 @@ namespace DataverseProcessMapper.Exporters
                 case NodeKind.End: return "k-end";
                 case NodeKind.Condition:
                 case NodeKind.Switch: return "k-cond";
+                case NodeKind.Case: return "k-case";
+                case NodeKind.Empty: return "k-empty";
                 case NodeKind.Loop: return "k-loop";
                 case NodeKind.Terminate: return "k-term";
                 default: return "k-action";
@@ -288,6 +290,7 @@ table.props pre.code { margin:2px 0; padding:7px 10px; background:#f6f8fa; borde
 .treebar button:hover { background:#f3f4f6; }
 .k-trigger{background:#00897b;} .k-start{background:#388e3c;} .k-end{background:#616161;}
 .k-cond{background:#f59f00;} .k-loop{background:#8e24aa;} .k-term{background:#c62828;} .k-action{background:#1976d2;}
+.k-case{background:#ef6c00;} .k-empty{background:#bdbdbd;}
 .footer { margin-top:24px; color:var(--muted); font-size:12px; }
 ";
         }
