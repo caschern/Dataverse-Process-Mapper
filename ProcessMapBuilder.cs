@@ -49,6 +49,10 @@ namespace DataverseProcessMapper
             var canvas = LayeredLayoutEngine.Layout(view);
             canvas = EnsureTitleFits(view, canvas);
 
+            // Annotation only — detection runs after layout and never moves a
+            // node, so the geometry is exactly what it was before.
+            view.ParallelBlocks = ParallelBlockDetector.Detect(view);
+
             map.ViewGraph = view;
             map.CanvasSize = canvas;
         }

@@ -38,6 +38,90 @@ namespace DataverseProcessMapper.Tests
             return g;
         }
 
+        /// <summary>
+        /// Mirrors the LAPD flow's real shape: a fan-out into <paramref name="branches"/>
+        /// chains of <paramref name="depth"/> steps each, all converging on one exit.
+        /// </summary>
+        private static ProcessGraph FanGraph(int branches, int depth)
+        {
+            var g = new ProcessGraph { Title = "fan" };
+            g.AddNode("Entry", NodeKind.Action, NodeShape.RoundedRect, id: "entry");
+            g.AddNode("Exit", NodeKind.Action, NodeShape.RoundedRect, id: "exit");
+            for (int b = 0; b < branches; b++)
+            {
+                string prev = "entry";
+                for (int d = 0; d < depth; d++)
+                {
+                    var id = $"b{b}_{d}";
+                    g.AddNode($"Step {b}.{d}", NodeKind.Action, NodeShape.RoundedRect, id: id);
+                    g.AddEdge(prev, id);
+                    prev = id;
+                }
+                g.AddEdge(prev, "exit");
+            }
+            return g;
+        }
+
+        [Fact]
+        public void MultiStepParallelBranches_AreDetectedAsOneBlock()
+        {
+            // Two steps per branch: a same-rank sibling test would miss this.
+            var blocks = ParallelBlockDetector.Detect(FanGraph(7, 2));
+            var block = Assert.Single(blocks);
+            Assert.Equal("entry", block.EntryId);
+            Assert.Equal("exit", block.ExitId);
+            Assert.Equal(7, block.BranchCount);
+            Assert.All(block.Branches, b => Assert.Equal(2, b.Count));
+        }
+
+        [Fact]
+        public void ContainerChildEdges_DoNotBreakDetection()
+        {
+            // Each branch head is a container with its own children, exactly like
+            // the conditions hanging off "Condition - Incident found".
+            var g = FanGraph(4, 1);
+            for (int b = 0; b < 4; b++)
+            {
+                var child = $"kid{b}";
+                g.AddNode("Inner", NodeKind.Action, NodeShape.RoundedRect, id: child);
+                g[child].ParentId = $"b{b}_0";
+                g.AddEdge($"b{b}_0", child);
+            }
+            var block = Assert.Single(ParallelBlockDetector.Detect(g));
+            Assert.Equal(4, block.BranchCount);
+            Assert.Contains("kid0", block.AllMemberIds); // children belong to the region
+        }
+
+        [Fact]
+        public void UnprovableFanOut_IsNotClaimedAsParallel()
+        {
+            // One branch escapes to somewhere else, so the region is not closed.
+            var g = FanGraph(4, 1);
+            g.AddNode("Escape", NodeKind.Action, NodeShape.RoundedRect, id: "escape");
+            g.AddEdge("b0_0", "escape");
+            Assert.Empty(ParallelBlockDetector.Detect(g));
+        }
+
+        [Fact]
+        public void SmallFanOut_IsBelowThreshold()
+        {
+            Assert.Empty(ParallelBlockDetector.Detect(FanGraph(2, 1)));
+        }
+
+        [Fact]
+        public void Detection_DoesNotMoveAnyNode()
+        {
+            var g = FanGraph(6, 2);
+            NodeSizer.MeasureAll(g);
+            LayeredLayoutEngine.Layout(g);
+            var before = g.Nodes.ToDictionary(n => n.Id, n => n.Bounds);
+
+            ParallelBlockDetector.Detect(g);
+
+            foreach (var n in g.Nodes)
+                Assert.Equal(before[n.Id], n.Bounds);
+        }
+
         [Fact]
         public void UnbreakableLabel_IsSplitAndStaysInsideTheShape()
         {

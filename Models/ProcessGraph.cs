@@ -109,6 +109,12 @@ namespace DataverseProcessMapper.Models
         public List<ProcessNode> Nodes { get; } = new List<ProcessNode>();
         public List<ProcessEdge> Edges { get; } = new List<ProcessEdge>();
 
+        /// <summary>
+        /// Regions proven to run concurrently. Recomputed on every layout; empty
+        /// when nothing in the graph provably forms a parallel block.
+        /// </summary>
+        public List<ParallelBlock> ParallelBlocks { get; set; } = new List<ParallelBlock>();
+
         private readonly Dictionary<string, ProcessNode> _byId = new Dictionary<string, ProcessNode>();
         private int _auto;
 

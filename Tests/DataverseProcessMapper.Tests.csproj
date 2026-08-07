@@ -22,4 +22,11 @@
     <ProjectReference Include="..\DataverseProcessMapper.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- A real 239-node production flow, used as the large-map benchmark. -->
+    <None Update="lapd-clientdata.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>
