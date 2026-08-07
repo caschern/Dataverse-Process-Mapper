@@ -109,6 +109,42 @@ namespace DataverseProcessMapper.Tests
         }
 
         [Fact]
+        public void BlockMembers_StayContiguousWithinTheirRank()
+        {
+            // A fan of 4 branches plus unrelated siblings competing for the same
+            // ranks: without cohesion the barycenters let them interleave.
+            var g = FanGraph(4, 2);
+            for (int i = 0; i < 3; i++)
+            {
+                g.AddNode("Other " + i, NodeKind.Action, NodeShape.RoundedRect, id: "other" + i);
+                g.AddEdge("entry", "other" + i);
+                g.AddEdge("other" + i, "exit");
+            }
+            // The strays make the region unprovable, so pin the block explicitly
+            // and check the ordering pass honours it.
+            var real = ParallelBlockDetector.Detect(FanGraph(4, 2));
+            g.ParallelBlocks = real;
+
+            NodeSizer.MeasureAll(g);
+            LayeredLayoutEngine.Layout(g);
+
+            var ids = new HashSet<string>(real.SelectMany(b => b.AllMemberIds));
+            foreach (var rank in g.Nodes.Where(n => ids.Contains(n.Id))
+                                        .GroupBy(n => n.Rank))
+            {
+                var row = g.Nodes.Where(n => n.Rank == rank.Key)
+                                 .OrderBy(n => n.Bounds.X)
+                                 .Select(n => ids.Contains(n.Id))
+                                 .ToList();
+                // Members must form one unbroken run: at most one false->true edge.
+                int runs = 0;
+                for (int i = 0; i < row.Count; i++)
+                    if (row[i] && (i == 0 || !row[i - 1])) runs++;
+                Assert.True(runs <= 1, $"rank {rank.Key} splits the block into {runs} runs");
+            }
+        }
+
+        [Fact]
         public void Detection_DoesNotMoveAnyNode()
         {
             var g = FanGraph(6, 2);

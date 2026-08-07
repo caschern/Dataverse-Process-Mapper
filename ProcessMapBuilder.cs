@@ -46,12 +46,14 @@ namespace DataverseProcessMapper
         {
             var view = GraphContraction.BuildView(map.Graph);
             NodeSizer.MeasureAll(view);
+
+            // Detection is purely structural (edges and ParentId), so it runs
+            // before layout: the ordering pass uses block membership to keep a
+            // region's branches together within their rank.
+            view.ParallelBlocks = ParallelBlockDetector.Detect(view);
+
             var canvas = LayeredLayoutEngine.Layout(view);
             canvas = EnsureTitleFits(view, canvas);
-
-            // Annotation only — detection runs after layout and never moves a
-            // node, so the geometry is exactly what it was before.
-            view.ParallelBlocks = ParallelBlockDetector.Detect(view);
 
             map.ViewGraph = view;
             map.CanvasSize = canvas;
