@@ -13,7 +13,13 @@ namespace DataverseProcessMapper.Models
         Loop,
         Switch,
         Terminate,
-        Note
+        Note,
+
+        /// <summary>One branch of a switch, labelled with the value it matches.</summary>
+        Case,
+
+        /// <summary>Marker for a branch that is declared but contains no actions.</summary>
+        Empty
     }
 
     public enum NodeShape

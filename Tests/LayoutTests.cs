@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using DataverseProcessMapper.Layout;
 using DataverseProcessMapper.Models;
+using DataverseProcessMapper.Rendering;
 using Xunit;
 
 namespace DataverseProcessMapper.Tests
@@ -35,6 +36,50 @@ namespace DataverseProcessMapper.Tests
             NodeSizer.MeasureAll(g);
             LayeredLayoutEngine.Layout(g);
             return g;
+        }
+
+        [Fact]
+        public void UnbreakableLabel_IsSplitAndStaysInsideTheShape()
+        {
+            // A GUID switch-case value: 36 characters with no space to wrap at.
+            const string Guid = "46ee7808-fb59-f111-bec6-7ced8dde196c";
+            var g = new ProcessGraph { Title = "long label" };
+            g.AddNode(Guid, NodeKind.Case, NodeShape.Stadium, id: "chip");
+            NodeSizer.MeasureAll(g);
+
+            var chip = g.Nodes.Single();
+            Assert.True(chip.Lines.Count > 1, "the token should be broken across lines");
+            Assert.DoesNotContain(Guid, chip.Lines);          // never one over-wide line
+            Assert.Equal(Guid, string.Concat(chip.Lines));    // and nothing is lost
+            Assert.True(chip.Bounds.Width <= DiagramStyle.NodeMaxWidth);
+        }
+
+        [Fact]
+        public void EveryWrappedLine_FitsTheNodesContentWidth()
+        {
+            var g = new ProcessGraph { Title = "widths" };
+            g.AddNode("46ee7808-fb59-f111-bec6-7ced8dde196c", NodeKind.Case, NodeShape.Stadium, id: "guid");
+            g.AddNode("https://contoso.crm.dynamics.com/api/data/v9.2/accounts", NodeKind.Action, NodeShape.RoundedRect, id: "url");
+            g.AddNode("A perfectly ordinary step name", NodeKind.Action, NodeShape.RoundedRect, id: "plain");
+            NodeSizer.MeasureAll(g);
+
+            using (var bmp = new System.Drawing.Bitmap(1, 1))
+            using (var gfx = System.Drawing.Graphics.FromImage(bmp))
+            using (var font = new System.Drawing.Font(DiagramStyle.LabelFont.Family,
+                       DiagramStyle.LabelFont.Size, System.Drawing.FontStyle.Bold))
+            {
+                foreach (var node in g.Nodes)
+                {
+                    float content = node.Bounds.Width - 2 * DiagramStyle.NodePadX;
+                    foreach (var line in node.Lines)
+                    {
+                        var w = gfx.MeasureString(line, font, 10000,
+                            System.Drawing.StringFormat.GenericTypographic).Width;
+                        Assert.True(w <= content + 0.5f,
+                            $"line \"{line}\" is {w:0.#}px inside {content:0.#}px of content width");
+                    }
+                }
+            }
         }
 
         [Fact]

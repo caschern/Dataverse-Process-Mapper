@@ -29,8 +29,14 @@ namespace DataverseProcessMapper.Layout
             var labelFont = DiagramStyle.LabelFont;
             bool diamond = node.Shape == NodeShape.Diamond;
 
-            // Diamonds fit less text horizontally, so wrap to a narrower width.
-            float wrapWidth = diamond ? DiagramStyle.NodeMaxWidth * 0.62f : DiagramStyle.NodeMaxWidth;
+            // Wrap to the width the finished box can actually hold. A plain box is
+            // clamped to NodeMaxWidth after padding is added, so the text has to
+            // leave room for that padding or it renders outside the shape. The
+            // diamond path scales its box up by 1.7 afterwards, so 0.62 already
+            // leaves it head-room.
+            float wrapWidth = diamond
+                ? DiagramStyle.NodeMaxWidth * 0.62f
+                : DiagramStyle.NodeMaxWidth - 2 * DiagramStyle.NodePadX;
 
             node.Lines = WrapText(g, node.Label, labelFont, wrapWidth);
 
@@ -86,6 +92,17 @@ namespace DataverseProcessMapper.Layout
                     {
                         current = candidate;
                     }
+
+                    // A single token with nowhere to break — a GUID case value, a
+                    // URL, a spaceless expression — still overflows the line above.
+                    // Split it by character so it stays inside the shape.
+                    while (MeasureString(g, current, font).Width > maxWidth)
+                    {
+                        var head = LongestPrefixThatFits(g, current, font, maxWidth);
+                        if (head.Length == 0 || head.Length == current.Length) break;
+                        lines.Add(head);
+                        current = current.Substring(head.Length);
+                    }
                 }
                 lines.Add(current);
             }
@@ -97,6 +114,15 @@ namespace DataverseProcessMapper.Layout
                 lines[5] = Truncate(lines[5]) + "…";
             }
             return lines;
+        }
+
+        /// <summary>Longest leading run of <paramref name="s"/> that fits the width (at least one character).</summary>
+        private static string LongestPrefixThatFits(Graphics g, string s, DiagramFont font, float maxWidth)
+        {
+            int count = s.Length;
+            while (count > 1 && MeasureString(g, s.Substring(0, count), font).Width > maxWidth)
+                count--;
+            return s.Substring(0, count);
         }
 
         private static string Truncate(string s) => s.Length > 24 ? s.Substring(0, 24) : s;

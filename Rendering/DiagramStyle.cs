@@ -75,6 +75,11 @@ namespace DataverseProcessMapper.Rendering
                     return Tint(Color.FromArgb(255, 248, 225), Color.FromArgb(245, 159, 0));
                 case NodeKind.Switch:
                     return Tint(Color.FromArgb(255, 243, 224), Color.FromArgb(239, 108, 0));
+                case NodeKind.Case:
+                    // Same orange family as the switch it belongs to, one shade deeper.
+                    return Tint(Color.FromArgb(255, 237, 213), Color.FromArgb(239, 108, 0));
+                case NodeKind.Empty:
+                    return Tint(Color.FromArgb(250, 250, 250), Color.FromArgb(189, 189, 189));
                 case NodeKind.Loop:
                     return Tint(Color.FromArgb(243, 229, 245), Color.FromArgb(142, 36, 170));
                 case NodeKind.Note:

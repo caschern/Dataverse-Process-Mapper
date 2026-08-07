@@ -180,7 +180,11 @@ namespace DataverseProcessMapper.Parsing
             var thenEl = ChildBranch(el, "Then");
             if (thenEl != null)
             {
+                // A branch element that exists but holds no steps is still a real
+                // branch — mark it rather than letting it collapse out of the map.
                 var thenTails = WalkSequence(graph, thenEl, new List<string> { condition.Id }, condition.Id);
+                if (ProducedNothing(thenTails, condition.Id))
+                    thenTails = new List<string> { AddEmptyMarker(graph, condition.Id).Id };
                 LabelEdges(graph, condition.Id, "Yes");
                 tails.AddRange(thenTails);
             }
@@ -193,6 +197,8 @@ namespace DataverseProcessMapper.Parsing
             if (elseEl != null)
             {
                 var elseTails = WalkSequence(graph, elseEl, new List<string> { condition.Id }, condition.Id);
+                if (ProducedNothing(elseTails, condition.Id))
+                    elseTails = new List<string> { AddEmptyMarker(graph, condition.Id).Id };
                 LabelEdges(graph, condition.Id, "No");
                 tails.AddRange(elseTails);
             }
@@ -214,6 +220,8 @@ namespace DataverseProcessMapper.Parsing
 
             var bodyEl = ChildBranch(el, "Body") ?? el;
             var bodyTails = WalkSequence(graph, bodyEl, new List<string> { loop.Id }, loop.Id);
+            if (ProducedNothing(bodyTails, loop.Id))
+                bodyTails = new List<string> { AddEmptyMarker(graph, loop.Id).Id };
 
             // Back-edge from the body's tail to the loop header.
             foreach (var t in bodyTails.Distinct())
@@ -239,13 +247,41 @@ namespace DataverseProcessMapper.Parsing
             {
                 foreach (var branch in cc.Elements())
                 {
-                    var branchTails = WalkSequence(graph, branch, new List<string> { sw.Id }, sw.Id);
+                    // A chip carries the matched value, so every branch is identifiable.
+                    var chip = graph.AddNode(CaseKey(branch), NodeKind.Case, NodeShape.Stadium);
+                    chip.ParentId = sw.Id;
+                    graph.AddEdge(sw.Id, chip.Id);
+
+                    var branchTails = WalkSequence(graph, branch, new List<string> { chip.Id }, chip.Id);
+                    if (ProducedNothing(branchTails, chip.Id))
+                        branchTails = new List<string> { AddEmptyMarker(graph, chip.Id).Id };
                     tails.AddRange(branchTails);
                 }
             }
 
             if (tails.Count == 0) tails.Add(sw.Id);
             return tails.Distinct().ToList();
+        }
+
+        /// <summary>True when walking a branch produced no nodes of its own.</summary>
+        private static bool ProducedNothing(List<string> tails, string branchRootId)
+            => tails.Count == 1 && tails[0] == branchRootId;
+
+        /// <summary>Explicit "this branch does nothing" node, so empty branches stay visible.</summary>
+        private static ProcessNode AddEmptyMarker(ProcessGraph graph, string parentId)
+        {
+            var node = graph.AddNode("(no actions)", NodeKind.Empty, NodeShape.RoundedRect);
+            node.ParentId = parentId;
+            graph.AddEdge(parentId, node.Id);
+            return node;
+        }
+
+        /// <summary>The value a switch case matches, taken from its x:Key attribute.</summary>
+        private static string CaseKey(XElement branch)
+        {
+            var key = branch.Attributes().FirstOrDefault(a =>
+                a.Name.LocalName.Equals("Key", StringComparison.OrdinalIgnoreCase))?.Value;
+            return string.IsNullOrWhiteSpace(key) ? "case" : key.Trim();
         }
 
         // ---------- helpers ----------

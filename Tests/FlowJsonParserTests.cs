@@ -73,6 +73,86 @@ namespace DataverseProcessMapper.Tests
             Assert.Contains("No", labels);
         }
 
+        /// <summary>A switch with a populated case, a declared-but-empty case, and a
+        /// default — plus an empty Scope and an If whose else branch has no actions.</summary>
+        private const string BranchDefinition = @"{
+          ""triggers"": { ""Manual"": { ""type"": ""Request"" } },
+          ""actions"": {
+            ""Check_status"": {
+              ""type"": ""Switch"", ""expression"": ""@variables('Status')"", ""runAfter"": {},
+              ""cases"": {
+                ""Case"":   { ""case"": ""Approved"", ""actions"": { ""Send_email"": { ""type"": ""Compose"", ""inputs"": ""1"", ""runAfter"": {} } } },
+                ""Case_2"": { ""case"": ""On hold"",  ""actions"": {} }
+              },
+              ""default"": { ""actions"": {} }
+            },
+            ""Empty_scope"": { ""type"": ""Scope"", ""runAfter"": { ""Check_status"": [""Succeeded""] }, ""actions"": {} },
+            ""Half_if"": {
+              ""type"": ""If"", ""runAfter"": { ""Empty_scope"": [""Succeeded""] },
+              ""actions"": { ""Then_step"": { ""type"": ""Compose"", ""inputs"": ""2"", ""runAfter"": {} } },
+              ""else"": { ""actions"": {} }
+            }
+          }}";
+
+        private static ProcessGraph ParseBranches() => new FlowJsonParser().Parse(new ProcessItem
+        {
+            Name = "Branch Flow",
+            Category = 5,
+            ClientData = "{\"properties\":{\"definition\":" + BranchDefinition + "}}"
+        });
+
+        [Fact]
+        public void SwitchCases_BecomeChipsLabeledWithMatchedValue()
+        {
+            var g = ParseBranches();
+            var chips = g.Nodes.Where(n => n.Kind == NodeKind.Case).Select(n => n.Label).ToList();
+            // The "case" value is used, never the designer key ("Case", "Case_2").
+            Assert.Equal(new[] { "Approved", "On hold", "default" }, chips);
+            Assert.DoesNotContain("Case 2", chips);
+        }
+
+        [Fact]
+        public void SwitchChips_HangOffTheSwitch_AndOwnTheirActions()
+        {
+            var g = ParseBranches();
+            var sw = ByLabel(g, "Check status");
+            var approved = ByLabel(g, "Approved");
+            Assert.Equal(sw.Id, approved.ParentId);
+            Assert.Contains(g.Edges, e => e.FromId == sw.Id && e.ToId == approved.Id);
+            Assert.Equal(approved.Id, ByLabel(g, "Send email").ParentId);
+        }
+
+        [Fact]
+        public void EmptyCase_AndEmptyDefault_StayVisible()
+        {
+            var g = ParseBranches();
+            // Previously both vanished, understating the switch's real branch count.
+            foreach (var branch in new[] { "On hold", "default" })
+            {
+                var chip = ByLabel(g, branch);
+                Assert.Contains(g.Nodes, n => n.Kind == NodeKind.Empty && n.ParentId == chip.Id);
+            }
+        }
+
+        [Fact]
+        public void EmptyScopeBody_AndEmptyElseBranch_AreMarked()
+        {
+            var g = ParseBranches();
+            var scope = ByLabel(g, "Empty scope");
+            Assert.Contains(g.Nodes, n => n.Kind == NodeKind.Empty && n.ParentId == scope.Id);
+
+            var half = ByLabel(g, "Half if");
+            var elseMarker = g.Nodes.Single(n => n.Kind == NodeKind.Empty && n.ParentId == half.Id);
+            Assert.Contains(g.Edges, e => e.FromId == half.Id && e.ToId == elseMarker.Id && e.Label == "No");
+        }
+
+        [Fact]
+        public void PopulatedBranches_GetNoEmptyMarker()
+        {
+            var g = Parse(); // the original sample: every branch has actions
+            Assert.DoesNotContain(g.Nodes, n => n.Kind == NodeKind.Empty);
+        }
+
         [Fact]
         public void FetchXml_IsPrettyPrintedMultiline()
         {
