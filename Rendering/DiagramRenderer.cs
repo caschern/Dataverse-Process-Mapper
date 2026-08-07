@@ -13,6 +13,11 @@ namespace DataverseProcessMapper.Rendering
     /// </summary>
     public static class DiagramRenderer
     {
+        // Parallel-block annotation: a quiet boundary that never competes with the steps.
+        private static readonly Color BlockBorderColor = Color.FromArgb(0, 137, 123);
+        private static readonly Color BlockCaptionColor = Color.FromArgb(0, 121, 107);
+        private const float BlockPad = 14f;
+
         // Selection highlighting: the selected node's edges pop, everything else recedes.
         private static readonly Color HighlightEdgeColor = Color.FromArgb(37, 118, 220);
         private static readonly Color DimEdgeColor = Color.FromArgb(214, 218, 224);
@@ -22,6 +27,7 @@ namespace DataverseProcessMapper.Rendering
             bool interactive = false, string highlightId = null)
         {
             DrawTitle(surface, graph, canvas);
+            DrawParallelBlocks(surface, graph);
 
             bool highlight = interactive && !string.IsNullOrEmpty(highlightId);
             var lanes = AssignEdgeLanes(graph);
@@ -165,6 +171,61 @@ namespace DataverseProcessMapper.Rendering
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Outlines each proven parallel region and captions it, so concurrency
+        /// is stated rather than merely implied by nodes sitting side by side.
+        /// Nothing here moves a node — if a block's members are not contiguous on
+        /// the canvas, the boundary would enclose unrelated steps and is skipped.
+        /// </summary>
+        private static void DrawParallelBlocks(IDiagramSurface s, ProcessGraph graph)
+        {
+            if (graph.ParallelBlocks == null || graph.ParallelBlocks.Count == 0) return;
+
+            foreach (var block in graph.ParallelBlocks)
+            {
+                var members = block.AllMemberIds
+                    .Select(id => graph[id])
+                    .Where(n => n != null)
+                    .ToList();
+                if (members.Count == 0) continue;
+
+                var box = Union(members.Select(n => n.Bounds));
+                box = RectangleF.Inflate(box, BlockPad, BlockPad);
+
+                // Contiguity check: any unrelated node overlapping the box means
+                // the outline would claim steps that are not part of this region.
+                // The entry and exit are the block's own anchors, not intruders.
+                var memberIds = new HashSet<string>(block.AllMemberIds) { block.EntryId, block.ExitId };
+                bool clean = graph.Nodes.All(n => memberIds.Contains(n.Id) || !n.Bounds.IntersectsWith(box));
+                if (!clean) continue;
+
+                var caption = block.Caption;
+                var size = s.MeasureString(caption, DiagramStyle.SubtitleFont);
+                float capX = box.Left + 12f;
+
+                // Four dashed lines rather than a dashed rounded-rect: DrawLine
+                // already carries a dash flag on every surface, so this needs no
+                // change to GDI+, PDF and SVG backends. The top edge breaks around
+                // the caption so the text reads cleanly, like a fieldset legend.
+                s.DrawLine(BlockBorderColor, 1.2f, box.Left, box.Top, capX - 4f, box.Top, true);
+                s.DrawLine(BlockBorderColor, 1.2f, capX + size.Width + 4f, box.Top, box.Right, box.Top, true);
+                s.DrawLine(BlockBorderColor, 1.2f, box.Right, box.Top, box.Right, box.Bottom, true);
+                s.DrawLine(BlockBorderColor, 1.2f, box.Right, box.Bottom, box.Left, box.Bottom, true);
+                s.DrawLine(BlockBorderColor, 1.2f, box.Left, box.Bottom, box.Left, box.Top, true);
+
+                s.DrawString(caption, DiagramStyle.SubtitleFont, BlockCaptionColor,
+                    capX, box.Top - size.Height / 2f);
+            }
+        }
+
+        private static RectangleF Union(IEnumerable<RectangleF> rects)
+        {
+            RectangleF? acc = null;
+            foreach (var r in rects)
+                acc = acc == null ? r : RectangleF.Union(acc.Value, r);
+            return acc ?? RectangleF.Empty;
         }
 
         private static void DrawTitle(IDiagramSurface s, ProcessGraph graph, SizeF canvas)
