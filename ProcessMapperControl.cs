@@ -38,6 +38,7 @@ namespace DataverseProcessMapper
         private ToolStripButton _htmlButton;
         private ToolStripButton _svgButton;
         private ToolStripButton _pngButton;
+        private ToolStripButton _markdownButton;
         private ToolStripButton _exportAllButton;
         private ToolStripButton _fitButton;
         private ToolStripTextBox _findBox;
@@ -108,6 +109,15 @@ namespace DataverseProcessMapper
             };
             _pngButton.Click += (s, e) => Export(ExportFormat.Png);
 
+            _markdownButton = new ToolStripButton("Generate Markdown")
+            {
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                Enabled = false,
+                ToolTipText = "Structured text for AI knowledge bases (Copilot Studio, RAG) — " +
+                              "states what each step runs after and branches into, which a diagram cannot"
+            };
+            _markdownButton.Click += (s, e) => Export(ExportFormat.Markdown);
+
             _exportAllButton = new ToolStripButton("Export All HTML")
             {
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
@@ -149,7 +159,7 @@ namespace DataverseProcessMapper
             toolbar.Items.AddRange(new ToolStripItem[]
             {
                 _loadButton, new ToolStripSeparator(),
-                _pdfButton, _htmlButton, _svgButton, _pngButton, new ToolStripSeparator(),
+                _pdfButton, _htmlButton, _svgButton, _pngButton, _markdownButton, new ToolStripSeparator(),
                 _exportAllButton, new ToolStripSeparator(),
                 _fitButton, _findBox, new ToolStripSeparator(),
                 _status, closeButton
@@ -466,7 +476,7 @@ namespace DataverseProcessMapper
 
         // ---------------------------------------------------------- exporting
 
-        private enum ExportFormat { Pdf, Html, Svg, Png }
+        private enum ExportFormat { Pdf, Html, Svg, Png, Markdown }
 
         private void Export(ExportFormat format)
         {
@@ -496,6 +506,10 @@ namespace DataverseProcessMapper
                         dialog.Filter = "PNG image (*.png)|*.png";
                         dialog.FileName = safeName + ".png";
                         break;
+                    case ExportFormat.Markdown:
+                        dialog.Filter = "Markdown document (*.md)|*.md";
+                        dialog.FileName = safeName + ".md";
+                        break;
                     default:
                         dialog.Filter = "HTML document (*.html)|*.html";
                         dialog.FileName = safeName + ".html";
@@ -518,6 +532,9 @@ namespace DataverseProcessMapper
                         case ExportFormat.Png:
                             using (var bmp = ProcessMapBuilder.RenderToBitmap(map, 2f))
                                 bmp.Save(dialog.FileName, System.Drawing.Imaging.ImageFormat.Png);
+                            break;
+                        case ExportFormat.Markdown:
+                            MarkdownExporter.Save(map, dialog.FileName);
                             break;
                         default:
                             HtmlExporter.Save(map, dialog.FileName);
@@ -622,6 +639,7 @@ namespace DataverseProcessMapper
             _htmlButton.Enabled = hasMap;
             _svgButton.Enabled = hasMap;
             _pngButton.Enabled = hasMap;
+            _markdownButton.Enabled = hasMap;
             _fitButton.Enabled = hasMap;
             _exportAllButton.Enabled = CurrentList()?.Items.Count > 0;
         }

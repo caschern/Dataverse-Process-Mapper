@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
   <metadata>
     <id>CasasHern.DataverseProcessMapper</id>
-    <version>1.0.26</version>
+    <version>1.0.27</version>
     <title>Dataverse Process Mapper</title>
     <authors>Cristian Casas</authors>
     <owners>Cristian Casas</owners>
