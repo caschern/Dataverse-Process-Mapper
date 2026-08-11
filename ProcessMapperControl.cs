@@ -40,6 +40,7 @@ namespace DataverseProcessMapper
         private ToolStripButton _pngButton;
         private ToolStripButton _markdownButton;
         private ToolStripButton _exportAllButton;
+        private ToolStripButton _exportAllMarkdownButton;
         private ToolStripButton _fitButton;
         private ToolStripTextBox _findBox;
         private ToolStripLabel _status;
@@ -124,7 +125,16 @@ namespace DataverseProcessMapper
                 Enabled = false,
                 ToolTipText = "Export every process in the current list to a folder with an index page"
             };
-            _exportAllButton.Click += (s, e) => ExportAllHtml();
+            _exportAllButton.Click += (s, e) => ExportAll(bulkMarkdown: false);
+
+            _exportAllMarkdownButton = new ToolStripButton("Export All Markdown")
+            {
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                Enabled = false,
+                ToolTipText = "Export every process in the current list as Markdown, " +
+                              "ready to upload as an AI knowledge source"
+            };
+            _exportAllMarkdownButton.Click += (s, e) => ExportAll(bulkMarkdown: true);
 
             _fitButton = new ToolStripButton("Zoom to Fit")
             {
@@ -160,7 +170,7 @@ namespace DataverseProcessMapper
             {
                 _loadButton, new ToolStripSeparator(),
                 _pdfButton, _htmlButton, _svgButton, _pngButton, _markdownButton, new ToolStripSeparator(),
-                _exportAllButton, new ToolStripSeparator(),
+                _exportAllButton, _exportAllMarkdownButton, new ToolStripSeparator(),
                 _fitButton, _findBox, new ToolStripSeparator(),
                 _status, closeButton
             });
@@ -563,8 +573,9 @@ namespace DataverseProcessMapper
         /// Exports every process in the current tab's (filtered) list to one
         /// HTML file each, plus an index.html linking them.
         /// </summary>
-        private void ExportAllHtml()
+        private void ExportAll(bool bulkMarkdown)
         {
+            var kind = bulkMarkdown ? "Markdown" : "HTML";
             var items = CurrentList().Items.Cast<ListViewItem>()
                 .Select(l => l.Tag as ProcessItem)
                 .Where(p => p != null)
@@ -576,10 +587,24 @@ namespace DataverseProcessMapper
                 return;
             }
 
+            // The pack is one file per process plus the index; warn before doing
+            // the work rather than after, since the limit is per Copilot agent.
+            if (bulkMarkdown && items.Count + 1 > BulkMarkdownExporter.KnowledgeFileLimit)
+            {
+                var proceed = MessageBox.Show(this,
+                    $"This will produce {items.Count + 1} files, more than the " +
+                    $"{BulkMarkdownExporter.KnowledgeFileLimit} a single Copilot Studio agent accepts " +
+                    "as knowledge.\n\nYou can still export and split the pack, or filter the list first." +
+                    "\n\nExport anyway?",
+                    "More files than one agent accepts",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (proceed != DialogResult.Yes) return;
+            }
+
             string folder;
             using (var dlg = new FolderBrowserDialog
             {
-                Description = $"Choose a folder for the {items.Count} exported HTML files"
+                Description = $"Choose a folder for the {items.Count} exported {kind} files"
             })
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
@@ -590,11 +615,13 @@ namespace DataverseProcessMapper
 
             WorkAsync(new WorkAsyncInfo
             {
-                Message = $"Exporting {items.Count} processes to HTML...",
+                Message = $"Exporting {items.Count} processes to {kind}...",
                 Work = (worker, args) =>
                 {
-                    args.Result = BulkHtmlExporter.Export(items, folder, setLabel,
-                        s => worker.ReportProgress(0, s));
+                    Action<string> report = s => worker.ReportProgress(0, s);
+                    args.Result = bulkMarkdown
+                        ? BulkMarkdownExporter.Export(items, folder, setLabel, report)
+                        : BulkHtmlExporter.Export(items, folder, setLabel, report);
                 },
                 ProgressChanged = args => SetWorkingMessage(args.UserState?.ToString()),
                 PostWorkCallBack = args =>
@@ -641,7 +668,9 @@ namespace DataverseProcessMapper
             _pngButton.Enabled = hasMap;
             _markdownButton.Enabled = hasMap;
             _fitButton.Enabled = hasMap;
-            _exportAllButton.Enabled = CurrentList()?.Items.Count > 0;
+            bool hasList = CurrentList()?.Items.Count > 0;
+            _exportAllButton.Enabled = hasList;
+            _exportAllMarkdownButton.Enabled = hasList;
         }
 
         private static string MakeSafeFileName(string name)
