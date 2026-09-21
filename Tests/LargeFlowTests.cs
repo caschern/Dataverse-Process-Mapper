@@ -17,10 +17,10 @@ namespace DataverseProcessMapper.Tests
         {
             Name = "Integration - LAPD",
             Category = 5,
-            ClientData = File.ReadAllText("lapd-clientdata.json")
+            ClientData = File.ReadAllText(RealFlowFactAttribute.FixturePath)
         });
 
-        [Fact]
+        [RealFlowFact]
         public void RealFlow_ParsesToTheExpectedShape()
         {
             var g = Lapd().ViewGraph;
@@ -30,7 +30,7 @@ namespace DataverseProcessMapper.Tests
             Assert.Single(g.Nodes.Where(n => n.Kind == NodeKind.Trigger));
         }
 
-        [Fact]
+        [RealFlowFact]
         public void RealFlow_DetectsItsThreeParallelBlocks()
         {
             var g = Lapd().ViewGraph;
@@ -48,7 +48,7 @@ namespace DataverseProcessMapper.Tests
                                       && b.BranchCount == 8);
         }
 
-        [Fact]
+        [RealFlowFact]
         public void RealFlow_BlocksAreClosedRegions()
         {
             var g = Lapd().ViewGraph;
@@ -64,7 +64,7 @@ namespace DataverseProcessMapper.Tests
             }
         }
 
-        [Fact]
+        [RealFlowFact]
         public void RealFlow_LayoutIsDeterministic()
         {
             var a = Lapd();

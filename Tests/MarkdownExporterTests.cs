@@ -90,14 +90,14 @@ namespace DataverseProcessMapper.Tests
             Assert.True(fences % 2 == 0, $"{fences} fences — every block must be closed");
         }
 
-        [Fact]
+        [RealFlowFact]
         public void RealFlow_ExportsWithoutLosingSteps()
         {
             var map = ProcessMapBuilder.Build(new ProcessItem
             {
                 Name = "Integration - LAPD",
                 Category = 5,
-                ClientData = File.ReadAllText("lapd-clientdata.json")
+                ClientData = File.ReadAllText(RealFlowFactAttribute.FixturePath)
             });
             var md = MarkdownExporter.Build(map);
 

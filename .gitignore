@@ -9,3 +9,6 @@ obj/
 *.user
 *.nupkg
 TestResults/
+# A client's production flow definition, used as the large-flow test benchmark.
+# Kept local: the repository is public.
+Tests/lapd-clientdata.json
