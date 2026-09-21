@@ -177,15 +177,16 @@ namespace DataverseProcessMapper.Parsing
                 foreach (var c in cases.Properties())
                 {
                     var caseObj = c.Value as JObject;
+                    var value = CaseValue(caseObj);
                     AddCaseBranch(graph, caseObj?["actions"] as JObject, controlId,
-                        CaseLabel(caseObj, c.Name), idPrefix + "_" + Sanitize(c.Name));
+                        CaseTitle(c.Name, value), idPrefix + "_" + Sanitize(c.Name), value, isDefault: false);
                 }
 
                 // Drawn whenever the default branch is declared, even when it is empty.
                 var defaultObj = body["default"] as JObject;
                 if (defaultObj != null)
                     AddCaseBranch(graph, defaultObj["actions"] as JObject, controlId,
-                        "default", idPrefix + "_default");
+                        "default", idPrefix + "_default", null, isDefault: true);
                 return;
             }
 
@@ -202,15 +203,28 @@ namespace DataverseProcessMapper.Parsing
         }
 
         /// <summary>
-        /// Adds one switch branch: a chip node carrying the value the case matches,
-        /// with that case's actions beneath it. A declared case with no actions still
-        /// gets its chip plus an empty marker, so a branch that exists in the flow is
-        /// never silently missing from the map.
+        /// Adds one switch branch: a chip node titled the way the Power Automate
+        /// designer titles it, with that case's actions beneath it. The value the
+        /// case matches is kept as well — shortened under the title when the title
+        /// is the author's own words, and in full in the details. A declared case
+        /// with no actions still gets its chip plus an empty marker, so a branch
+        /// that exists in the flow is never silently missing from the map.
         /// </summary>
-        private void AddCaseBranch(ProcessGraph graph, JObject actions, string switchId, string label, string idPrefix)
+        private void AddCaseBranch(ProcessGraph graph, JObject actions, string switchId,
+            string title, string idPrefix, string matchValue, bool isDefault)
         {
-            var chip = graph.AddNode(label, NodeKind.Case, NodeShape.Stadium, id: idPrefix + "::case");
+            // Only repeat the value under the title when the title is not already it.
+            string subtitle = matchValue != null && title != matchValue
+                ? "equals " + ShortValue(matchValue)
+                : null;
+
+            var chip = graph.AddNode(title, NodeKind.Case, NodeShape.Stadium,
+                id: idPrefix + "::case", subtitle: subtitle);
             chip.ParentId = switchId;
+            if (isDefault)
+                chip.Details.Add(new KeyValuePair<string, string>("Runs when", "no other case matches"));
+            else if (matchValue != null)
+                chip.Details.Add(new KeyValuePair<string, string>("Equals", matchValue));
             graph.AddEdge(switchId, chip.Id);
 
             if (actions != null && actions.Count > 0)
@@ -230,20 +244,48 @@ namespace DataverseProcessMapper.Parsing
         }
 
         /// <summary>
-        /// The value a case matches on. Power Automate stores it in the case's own
-        /// "case" property; the property name ("Case", "Case_2") is only a
-        /// designer-generated key, so it serves purely as a fallback.
+        /// The chip's title, matching the designer. A renamed case carries its
+        /// author's title in its key — "Case_-_ATI_Finished_and_Closed" is shown by
+        /// the designer as "Case - ATI Finished and Closed" — and that is far more
+        /// readable than the matched value, which is often a record GUID. Only an
+        /// untouched designer default ("Case", "Case_2") says nothing, and for
+        /// those the matched value is the better label.
         /// </summary>
-        private static string CaseLabel(JObject caseObj, string key)
+        private static string CaseTitle(string key, string matchValue)
         {
-            var value = caseObj?["case"];
-            if (value != null && value.Type != JTokenType.Null)
-            {
-                var text = Compact(value);
-                if (!string.IsNullOrWhiteSpace(text)) return text;
-            }
+            if (IsDefaultCaseKey(key) && !string.IsNullOrWhiteSpace(matchValue))
+                return matchValue;
             return Humanize(key);
         }
+
+        /// <summary>True for the names the designer assigns before anyone renames a case.</summary>
+        private static bool IsDefaultCaseKey(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return true;
+            if (key.Equals("Case", StringComparison.OrdinalIgnoreCase)) return true;
+            return key.Length > 5
+                && key.StartsWith("Case_", StringComparison.OrdinalIgnoreCase)
+                && key.Substring(5).All(char.IsDigit);
+        }
+
+        /// <summary>The value a case matches on, from the case's own "case" property.</summary>
+        private static string CaseValue(JObject caseObj)
+        {
+            var value = caseObj?["case"];
+            if (value == null || value.Type == JTokenType.Null) return null;
+            var text = Compact(value);
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+
+        /// <summary>
+        /// Shortens a long match value for display under the title, keeping both
+        /// ends — for a GUID the start and end are what tell two apart. The full
+        /// value stays in the details, so nothing is lost.
+        /// </summary>
+        private static string ShortValue(string value)
+            => value.Length <= 24
+                ? value
+                : value.Substring(0, 8) + "…" + value.Substring(value.Length - 8);
 
         private void LinkBranchPlaceholder(ProcessGraph graph, string controlId, string label, string idPrefix)
         {

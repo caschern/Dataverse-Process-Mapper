@@ -106,7 +106,8 @@ namespace DataverseProcessMapper.Tests
         {
             var g = ParseBranches();
             var chips = g.Nodes.Where(n => n.Kind == NodeKind.Case).Select(n => n.Label).ToList();
-            // The "case" value is used, never the designer key ("Case", "Case_2").
+            // These keys are untouched designer defaults ("Case", "Case_2"), which
+            // say nothing, so the matched value labels them instead.
             Assert.Equal(new[] { "Approved", "On hold", "default" }, chips);
             Assert.DoesNotContain("Case 2", chips);
         }
@@ -151,6 +152,66 @@ namespace DataverseProcessMapper.Tests
         {
             var g = Parse(); // the original sample: every branch has actions
             Assert.DoesNotContain(g.Nodes, n => n.Kind == NodeKind.Empty);
+        }
+
+        /// <summary>A switch on a lookup whose case values are record GUIDs, with
+        /// cases renamed in the designer — plus one left at its default name.</summary>
+        private const string TitledSwitchDefinition = @"{
+          ""triggers"": { ""Manual"": { ""type"": ""Request"" } },
+          ""actions"": {
+            ""Switch"": {
+              ""type"": ""Switch"", ""expression"": ""@triggerBody()?['outcome']"", ""runAfter"": {},
+              ""cases"": {
+                ""Case_-_ATI_Finished_and_Closed"": { ""case"": ""46ee7808-fb59-f111-bec6-7ced8dde196c"",
+                  ""actions"": { ""Condition_-_Diversion_Program_is_ATI"": { ""type"": ""Compose"", ""inputs"": ""1"", ""runAfter"": {} } } },
+                ""Case_-_Returned_to_Filer"": { ""case"": ""664dcdee-fa59-f111-bec6-7ced8dde196c"", ""actions"": {} },
+                ""Case_3"": { ""case"": ""Pending"", ""actions"": {} }
+              },
+              ""default"": { ""actions"": {} }
+            }
+          }}";
+
+        private static ProcessGraph ParseTitled() => new FlowJsonParser().Parse(new ProcessItem
+        {
+            Name = "Titled Switch",
+            Category = 5,
+            ClientData = "{\"properties\":{\"definition\":" + TitledSwitchDefinition + "}}"
+        });
+
+        [Fact]
+        public void RenamedCases_UseTheDesignersTitle_NotTheGuid()
+        {
+            var chips = ParseTitled().Nodes.Where(n => n.Kind == NodeKind.Case).Select(n => n.Label).ToList();
+            Assert.Contains("Case - ATI Finished and Closed", chips);
+            Assert.Contains("Case - Returned to Filer", chips);
+            Assert.DoesNotContain(chips, l => l.StartsWith("46ee7808"));
+        }
+
+        [Fact]
+        public void UntouchedDefaultCaseNames_FallBackToTheMatchedValue()
+        {
+            var chips = ParseTitled().Nodes.Where(n => n.Kind == NodeKind.Case).Select(n => n.Label).ToList();
+            Assert.Contains("Pending", chips);
+            Assert.DoesNotContain("Case 3", chips);
+        }
+
+        [Fact]
+        public void MatchedValue_IsKeptInFullInDetails_AndShortenedUnderTheTitle()
+        {
+            var g = ParseTitled();
+            var ati = ByLabel(g, "Case - ATI Finished and Closed");
+            Assert.Contains(ati.Details, d => d.Key == "Equals" && d.Value == "46ee7808-fb59-f111-bec6-7ced8dde196c");
+            Assert.Equal("equals 46ee7808…8dde196c", ati.Subtitle);
+
+            // When the value already is the title, it is not repeated underneath.
+            Assert.Null(ByLabel(g, "Pending").Subtitle);
+        }
+
+        [Fact]
+        public void DefaultBranch_SaysWhenItRuns()
+        {
+            var def = ByLabel(ParseTitled(), "default");
+            Assert.Contains(def.Details, d => d.Key == "Runs when" && d.Value == "no other case matches");
         }
 
         [Fact]
