@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Linq;
 using DataverseProcessMapper.Layout;
 using DataverseProcessMapper.Models;
 using DataverseProcessMapper.Parsing;
@@ -46,6 +47,69 @@ namespace DataverseProcessMapper
             var map = new ProcessMap { Graph = graph, Source = item, Mode = mode };
             RefreshView(map);
             return map;
+        }
+
+        /// <summary>At most this many boxes are visible when a large map first opens.</summary>
+        public const int OpeningBudget = 100;
+
+        /// <summary>
+        /// Collapses containers so a large map opens readable. Starting from
+        /// everything collapsed, containers are expanded a whole level at a time
+        /// while the visible boxes stay within <paramref name="budget"/>; a map
+        /// that fits opens fully expanded. Only the on-screen view changes —
+        /// exports always show every step (<see cref="Expanded"/>).
+        /// </summary>
+        public static void CollapseToFit(ProcessMap map, int budget = OpeningBudget)
+        {
+            var g = map.Graph;
+            if (g.Nodes.Count <= budget)
+            {
+                // Everything fits: open fully expanded, whatever was collapsed before.
+                if (!g.Nodes.Any(n => n.Collapsed)) return;
+                foreach (var n in g.Nodes) n.Collapsed = false;
+                RefreshView(map);
+                return;
+            }
+
+            string Parent(ProcessNode n) => n.ParentId != null && g.Contains(n.ParentId) ? n.ParentId : null;
+            var childCount = g.Nodes.Where(n => Parent(n) != null)
+                .GroupBy(Parent)
+                .ToDictionary(grp => grp.Key, grp => grp.Count());
+
+            int Depth(ProcessNode n)
+            {
+                int d = 0;
+                for (var p = Parent(n); p != null && d < g.Nodes.Count; p = Parent(g[p])) d++;
+                return d;
+            }
+
+            var containers = g.Nodes.Where(n => childCount.ContainsKey(n.Id)).ToList();
+            foreach (var c in containers) c.Collapsed = true;
+
+            int visible = g.Nodes.Count(n => Parent(n) == null);
+            var byLevel = containers.GroupBy(Depth).OrderBy(grp => grp.Key);
+            foreach (var level in byLevel)
+            {
+                int revealed = level.Sum(c => childCount[c.Id]);
+                if (visible + revealed > budget) break;
+                foreach (var c in level) c.Collapsed = false;
+                visible += revealed;
+            }
+
+            RefreshView(map);
+        }
+
+        /// <summary>
+        /// The map with every container expanded, for exports: a reader cannot
+        /// expand a PDF, so an export always shows every step, whatever is
+        /// collapsed on screen. The on-screen map is left untouched — a fresh map
+        /// is built from the same process rather than re-laying out this one,
+        /// whose nodes the screen is drawing.
+        /// </summary>
+        public static ProcessMap Expanded(ProcessMap map)
+        {
+            if (map.Source == null || !map.Graph.Nodes.Any(n => n.Collapsed)) return map;
+            return Build(map.Source, map.Mode);
         }
 
         /// <summary>

@@ -143,11 +143,17 @@ namespace DataverseProcessMapper.Layout
             return common;
         }
 
+        private const int OrderingSweeps = 8;
+        private const int TransposePasses = 12;
+
         /// <summary>
         /// Crossing reduction: orders the nodes of each rank by the barycenter
         /// (average position) of their neighbors in the adjacent rank, sweeping
-        /// down and up a few times, so children line up under their parents and
-        /// connectors don't cross.
+        /// down and up, so children line up under their parents and connectors
+        /// don't cross. Sweeps can make things worse as well as better, so the
+        /// ordering with the fewest crossings seen is the one kept. After the
+        /// container grouping, neighbours within the same group are swapped
+        /// wherever that removes crossings ("transpose").
         /// </summary>
         private static List<List<ProcessNode>> OrderRanks(ProcessGraph graph, List<ProcessNode> allNodes,
             List<ProcessEdge> forward)
@@ -168,17 +174,119 @@ namespace DataverseProcessMapper.Layout
             var children = forward.GroupBy(e => e.FromId)
                 .ToDictionary(g => g.Key, g => g.Select(e => e.ToId).ToList());
 
-            for (int iter = 0; iter < 4; iter++)
+            var best = Snapshot(ranks);
+            int bestCrossings = CountCrossings(ranks, children, order);
+            for (int iter = 0; iter < OrderingSweeps && bestCrossings > 0; iter++)
             {
                 for (int r = 1; r < ranks.Count; r++)          // downward: follow parents
                     SortByBarycenter(ranks[r], parents, order);
                 for (int r = ranks.Count - 2; r >= 0; r--)     // upward: follow children
                     SortByBarycenter(ranks[r], children, order);
-            }
 
-            ApplyContainerCohesion(graph, ranks, parents, order);
+                int crossings = CountCrossings(ranks, children, order);
+                if (crossings < bestCrossings)
+                {
+                    bestCrossings = crossings;
+                    best = Snapshot(ranks);
+                }
+            }
+            Restore(ranks, best, order);
+
+            var pathOf = CohesionPaths(graph);
+            ApplyContainerCohesion(ranks, parents, order, pathOf);
+            Transpose(ranks, parents, children, order, pathOf);
 
             return ranks;
+        }
+
+        private static List<List<ProcessNode>> Snapshot(List<List<ProcessNode>> ranks)
+            => ranks.Select(r => r.ToList()).ToList();
+
+        private static void Restore(List<List<ProcessNode>> ranks, List<List<ProcessNode>> saved,
+            Dictionary<string, int> order)
+        {
+            for (int r = 0; r < ranks.Count; r++)
+            {
+                ranks[r].Clear();
+                ranks[r].AddRange(saved[r]);
+                for (int i = 0; i < ranks[r].Count; i++)
+                    order[ranks[r][i].Id] = i;
+            }
+        }
+
+        /// <summary>
+        /// Crossings between adjacent ranks: two edges cross when their ends are
+        /// in opposite orders in the two ranks. (Layout edges always join
+        /// adjacent ranks — longer ones were split through virtual nodes.)
+        /// </summary>
+        private static int CountCrossings(List<List<ProcessNode>> ranks,
+            Dictionary<string, List<string>> children, Dictionary<string, int> order)
+        {
+            int total = 0;
+            var pairs = new List<KeyValuePair<int, int>>();
+            for (int r = 0; r < ranks.Count - 1; r++)
+            {
+                pairs.Clear();
+                foreach (var n in ranks[r])
+                    if (children.TryGetValue(n.Id, out var cs))
+                        foreach (var c in cs)
+                            if (order.TryGetValue(c, out var oc))
+                                pairs.Add(new KeyValuePair<int, int>(order[n.Id], oc));
+
+                for (int i = 0; i < pairs.Count; i++)
+                    for (int j = i + 1; j < pairs.Count; j++)
+                        if ((pairs[i].Key - pairs[j].Key) * (pairs[i].Value - pairs[j].Value) < 0)
+                            total++;
+            }
+            return total;
+        }
+
+        /// <summary>
+        /// Swaps adjacent nodes of the same container group while doing so
+        /// removes crossings with the ranks above and below. Group boundaries are
+        /// never crossed, so the cohesion ordering survives intact.
+        /// </summary>
+        private static void Transpose(List<List<ProcessNode>> ranks,
+            Dictionary<string, List<string>> parents, Dictionary<string, List<string>> children,
+            Dictionary<string, int> order, Func<ProcessNode, List<string>> pathOf)
+        {
+            bool improved = true;
+            for (int pass = 0; improved && pass < TransposePasses; pass++)
+            {
+                improved = false;
+                foreach (var rank in ranks)
+                {
+                    for (int i = 0; i < rank.Count - 1; i++)
+                    {
+                        var u = rank[i];
+                        var v = rank[i + 1];
+                        if (!pathOf(u).SequenceEqual(pathOf(v))) continue;
+
+                        int asIs = PairCrossings(u, v, parents, order) + PairCrossings(u, v, children, order);
+                        int swapped = PairCrossings(v, u, parents, order) + PairCrossings(v, u, children, order);
+                        if (swapped >= asIs) continue;
+
+                        rank[i] = v;
+                        rank[i + 1] = u;
+                        order[v.Id] = i;
+                        order[u.Id] = i + 1;
+                        improved = true;
+                    }
+                }
+            }
+        }
+
+        /// <summary>Crossings between the edges of <paramref name="left"/> and <paramref name="right"/> to one neighbouring rank.</summary>
+        private static int PairCrossings(ProcessNode left, ProcessNode right,
+            Dictionary<string, List<string>> neighbors, Dictionary<string, int> order)
+        {
+            if (!neighbors.TryGetValue(left.Id, out var ln) || !neighbors.TryGetValue(right.Id, out var rn)) return 0;
+            int count = 0;
+            foreach (var a in ln)
+                foreach (var b in rn)
+                    if (order.TryGetValue(a, out var oa) && order.TryGetValue(b, out var ob) && oa > ob)
+                        count++;
+            return count;
         }
 
         /// <summary>
@@ -194,39 +302,10 @@ namespace DataverseProcessMapper.Layout
         /// own rank — an axis that carries no meaning in the diagram, unlike the
         /// vertical axis which says "later" — so it changes nothing the map asserts.
         /// </summary>
-        private static void ApplyContainerCohesion(ProcessGraph graph, List<List<ProcessNode>> ranks,
-            Dictionary<string, List<string>> parents, Dictionary<string, int> order)
+        private static void ApplyContainerCohesion(List<List<ProcessNode>> ranks,
+            Dictionary<string, List<string>> parents, Dictionary<string, int> order,
+            Func<ProcessNode, List<string>> pathOf)
         {
-            var blockOf = new Dictionary<string, string>();
-            if (graph.ParallelBlocks != null)
-            {
-                foreach (var block in graph.ParallelBlocks)
-                {
-                    var key = "block:" + block.EntryId + "->" + block.ExitId;
-                    foreach (var id in block.AllMemberIds)
-                        blockOf[id] = key;
-                }
-            }
-
-            var pathCache = new Dictionary<string, List<string>>();
-            List<string> PathOf(ProcessNode node)
-            {
-                if (pathCache.TryGetValue(node.Id, out var cached)) return cached;
-                var path = new List<string>();
-                var cur = node.ParentId;
-                int guard = 0;
-                while (cur != null && guard++ < graph.Nodes.Count)
-                {
-                    path.Add(cur);
-                    cur = graph[cur]?.ParentId;
-                }
-                path.Reverse(); // outermost container first
-                if (blockOf.TryGetValue(node.Id, out var blockKey))
-                    path.Add(blockKey); // innermost key: siblings first, then region
-                pathCache[node.Id] = path;
-                return path;
-            }
-
             foreach (var rank in ranks)
             {
                 // Final barycenter per node from its parents' settled order.
@@ -245,12 +324,49 @@ namespace DataverseProcessMapper.Layout
                     bary[rank[i].Id] = value;
                 }
 
-                var sorted = SortCohesive(rank, 0, bary, PathOf);
+                var sorted = SortCohesive(rank, 0, bary, pathOf);
                 rank.Clear();
                 rank.AddRange(sorted);
                 for (int i = 0; i < rank.Count; i++)
                     order[rank[i].Id] = i;
             }
+        }
+
+        /// <summary>
+        /// Each node's grouping keys, outermost first: its container chain
+        /// (ParentId), then the parallel region it belongs to, if any.
+        /// </summary>
+        private static Func<ProcessNode, List<string>> CohesionPaths(ProcessGraph graph)
+        {
+            var blockOf = new Dictionary<string, string>();
+            if (graph.ParallelBlocks != null)
+            {
+                foreach (var block in graph.ParallelBlocks)
+                {
+                    var key = "block:" + block.EntryId + "->" + block.ExitId;
+                    foreach (var id in block.AllMemberIds)
+                        blockOf[id] = key;
+                }
+            }
+
+            var pathCache = new Dictionary<string, List<string>>();
+            return node =>
+            {
+                if (pathCache.TryGetValue(node.Id, out var cached)) return cached;
+                var path = new List<string>();
+                var cur = node.ParentId;
+                int guard = 0;
+                while (cur != null && guard++ < graph.Nodes.Count)
+                {
+                    path.Add(cur);
+                    cur = graph[cur]?.ParentId;
+                }
+                path.Reverse(); // outermost container first
+                if (blockOf.TryGetValue(node.Id, out var blockKey))
+                    path.Add(blockKey); // innermost key: siblings first, then region
+                pathCache[node.Id] = path;
+                return path;
+            };
         }
 
         private static List<ProcessNode> SortCohesive(List<ProcessNode> members, int depth,
@@ -719,7 +835,9 @@ namespace DataverseProcessMapper.Layout
                 bool isLabel = false;
                 if (straight)
                 {
-                    float chipHalf = (e.Label.Length * 6.5f + 10f) / 2f;
+                    // The chip as drawn: measured text plus its 3px backing on each
+                    // side, and a little clearance.
+                    float chipHalf = (NodeSizer.EdgeLabelWidth(e.Label) + 10f) / 2f;
                     left = sx - chipHalf;
                     right = sx + chipHalf;
                     isLabel = true;

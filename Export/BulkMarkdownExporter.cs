@@ -56,11 +56,11 @@ namespace DataverseProcessMapper.Exporters
                     {
                         Item = item,
                         File = file,
-                        Steps = map.Graph.Nodes.Count,
+                        Steps = map.Graph.StepCount,
                         Trigger = trigger?.Label,
                         // Counted from the process, the same way its own document
                         // counts them — not from however the diagram was laid out.
-                        ParallelGroups = ParallelBlockDetector.Detect(map.Graph).Count
+                        ParallelGroups = ParallelBlockDetector.DetectWithinContainers(map.Graph).Count
                     });
                     result.Exported++;
                 }

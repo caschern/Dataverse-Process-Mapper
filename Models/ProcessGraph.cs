@@ -148,6 +148,37 @@ namespace DataverseProcessMapper.Models
         /// <summary>Container frames, outermost first. Empty in the flat layout.</summary>
         public List<ContainerFrame> Frames { get; set; } = new List<ContainerFrame>();
 
+        /// <summary>
+        /// How many steps the process has: triggers, actions, conditions, loops,
+        /// scopes, waits — not the diagram's own boxes (Start/End, switch-case
+        /// chips, "(no actions)" markers) nor parser notes.
+        /// </summary>
+        public int StepCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (var n in Nodes)
+                    if (IsStep(n.Kind)) count++;
+                return count;
+            }
+        }
+
+        public static bool IsStep(NodeKind kind)
+        {
+            switch (kind)
+            {
+                case NodeKind.Start:
+                case NodeKind.End:
+                case NodeKind.Case:
+                case NodeKind.Empty:
+                case NodeKind.Note:
+                    return false;
+                default:
+                    return true;
+            }
+        }
+
         private readonly Dictionary<string, ProcessNode> _byId = new Dictionary<string, ProcessNode>();
         private int _auto;
 

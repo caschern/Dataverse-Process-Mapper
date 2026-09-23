@@ -133,6 +133,27 @@ namespace DataverseProcessMapper.Layout
 
         private static float Clamp(float v, float min, float max) => v < min ? min : (v > max ? max : v);
 
+        private static readonly object LabelLock = new object();
+        private static readonly Dictionary<string, float> LabelWidths = new Dictionary<string, float>();
+
+        /// <summary>
+        /// Width of an edge label's text in the font the renderer draws it with.
+        /// Cached: a process uses a handful of distinct labels ("Yes", "No",
+        /// "always", "Failed"…). Locked because maps are built on background threads.
+        /// </summary>
+        public static float EdgeLabelWidth(string label)
+        {
+            if (string.IsNullOrEmpty(label)) return 0f;
+            lock (LabelLock)
+            {
+                if (LabelWidths.TryGetValue(label, out var width)) return width;
+                using (var m = new TextMeasurer())
+                    width = m.Measure(label, DiagramStyle.EdgeLabelFont).Width;
+                LabelWidths[label] = width;
+                return width;
+            }
+        }
+
         /// <summary>
         /// An offscreen measuring context that creates each font once per pass
         /// rather than once per measurement — wrapping measures the same few

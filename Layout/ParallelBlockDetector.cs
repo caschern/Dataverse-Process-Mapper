@@ -95,6 +95,86 @@ namespace DataverseProcessMapper.Layout
         }
 
         /// <summary>
+        /// Parallel regions inside every container as well as at the top level.
+        /// <see cref="Detect"/> on the whole graph claims a region's nested steps,
+        /// so a parallel region inside one branch of another is never reported.
+        /// Here each container's own steps are examined on their own — the way the
+        /// nested layout lays them out — with a step inside a member container
+        /// standing for that container.
+        /// </summary>
+        public static List<ParallelBlock> DetectWithinContainers(ProcessGraph graph)
+        {
+            var result = new List<ParallelBlock>();
+            if (graph == null || graph.Nodes.Count == 0) return result;
+
+            string Parent(string id)
+            {
+                var p = graph[id]?.ParentId;
+                return p != null && graph.Contains(p) ? p : null;
+            }
+            var children = graph.Nodes.Where(n => Parent(n.Id) != null)
+                .GroupBy(n => Parent(n.Id))
+                .ToDictionary(g => g.Key, g => g.Select(n => n.Id).ToList());
+
+            // The node standing for id among scope's own steps (null = top level).
+            string MemberOf(string scope, string id)
+            {
+                if (id == scope) return id;
+                var cur = id;
+                for (int guard = 0; cur != null && guard < graph.Nodes.Count; guard++)
+                {
+                    var p = Parent(cur);
+                    if (p == scope) return cur;
+                    cur = p;
+                }
+                return null;
+            }
+
+            IEnumerable<string> Descendants(string id)
+            {
+                if (!children.TryGetValue(id, out var kids)) yield break;
+                foreach (var k in kids)
+                {
+                    yield return k;
+                    foreach (var d in Descendants(k)) yield return d;
+                }
+            }
+
+            var scopes = new List<string> { null };
+            scopes.AddRange(children.Keys);
+            foreach (var scope in scopes)
+            {
+                var sub = new ProcessGraph();
+                if (scope != null) sub.AddNode("", NodeKind.Action, NodeShape.RoundedRect, id: scope);
+                var members = scope == null
+                    ? graph.Nodes.Where(n => Parent(n.Id) == null).Select(n => n.Id)
+                    : children[scope];
+                foreach (var m in members) sub.AddNode("", NodeKind.Action, NodeShape.RoundedRect, id: m);
+
+                var seen = new HashSet<string>();
+                foreach (var e in graph.Edges)
+                {
+                    if (e.IsBack) continue;
+                    var from = MemberOf(scope, e.FromId);
+                    var to = MemberOf(scope, e.ToId);
+                    // Returning to the header is a loop, not flow.
+                    if (from == null || to == null || from == to || to == scope) continue;
+                    if (seen.Add(from + "|" + to)) sub.AddEdge(from, to);
+                }
+
+                foreach (var block in Detect(sub))
+                {
+                    block.AllMemberIds = block.AllMemberIds
+                        .SelectMany(id => new[] { id }.Concat(Descendants(id)))
+                        .Distinct()
+                        .ToList();
+                    result.Add(block);
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
         /// Walks backwards from a convergence predecessor along its own private
         /// chain. Returns the chain ordered entry-to-exit, and the fan-out node
         /// it hangs off. Returns null when the chain forks or merges on the way,

@@ -10,6 +10,7 @@ namespace DataverseProcessMapper.Exporters
     {
         public static void Save(ProcessMap map, string path)
         {
+            map = ProcessMapBuilder.Expanded(map); // every step, whatever is collapsed on screen
             using (var document = new PdfDocument())
             {
                 document.Info.Title = map.Graph.Title ?? "Process Map";

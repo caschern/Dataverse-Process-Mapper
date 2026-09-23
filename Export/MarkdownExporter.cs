@@ -29,9 +29,11 @@ namespace DataverseProcessMapper.Exporters
         public static string Build(ProcessMap map)
         {
             // The full graph, so the export never depends on what is collapsed
-            // in the UI; blocks are recomputed over it for the same reason.
+            // in the UI; blocks are recomputed over it for the same reason —
+            // container by container, so a parallel region nested inside a
+            // branch of another is stated too, as the diagram outlines it.
             var graph = map.Graph;
-            var blocks = ParallelBlockDetector.Detect(graph);
+            var blocks = ParallelBlockDetector.DetectWithinContainers(graph);
 
             var sb = new StringBuilder();
             AppendHeader(sb, map, graph);
@@ -63,7 +65,7 @@ namespace DataverseProcessMapper.Exporters
                     facts.Add("running against the `" + item.PrimaryEntity + "` table");
                 facts.Add("currently " + item.StateLabel.ToLowerInvariant());
             }
-            facts.Add("made up of " + graph.Nodes.Count + " steps");
+            facts.Add("made up of " + graph.StepCount + " steps");
 
             sb.AppendLine("**" + Clean(graph.Title) + "** is " + string.Join(", ", facts) + ".");
             sb.AppendLine();

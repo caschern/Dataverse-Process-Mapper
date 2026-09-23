@@ -18,6 +18,7 @@ namespace DataverseProcessMapper.Exporters
     {
         public static void Save(ProcessMap map, string path)
         {
+            map = ProcessMapBuilder.Expanded(map); // every step, whatever is collapsed on screen
             File.WriteAllText(path, BuildHtml(map, BuildSvg(map)), Encoding.UTF8);
         }
 
@@ -30,8 +31,6 @@ namespace DataverseProcessMapper.Exporters
             string elements;
             using (var surface = new SvgDiagramSurface())
             {
-                // Diagram = what's on screen (collapsed containers stay collapsed);
-                // the step tree below always documents the FULL graph.
                 DiagramRenderer.Render(surface, map.ViewGraph, map.CanvasSize);
                 elements = surface.GetElements();
             }
@@ -69,7 +68,7 @@ namespace DataverseProcessMapper.Exporters
             Meta(sb, "Type", item?.CategoryLabel);
             Meta(sb, "Primary table", string.IsNullOrEmpty(item?.PrimaryEntity) ? "—" : item.PrimaryEntity);
             Meta(sb, "Status", item?.StateLabel);
-            Meta(sb, "Steps", map.Graph.Nodes.Count.ToString());
+            Meta(sb, "Steps", map.Graph.StepCount.ToString());
             Meta(sb, "Generated", DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
             sb.AppendLine("</tbody></table>");
 

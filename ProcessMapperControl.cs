@@ -499,7 +499,9 @@ namespace DataverseProcessMapper
                 {
                     if (!item.DefinitionLoaded)
                         WorkflowRepository.LoadDefinitions(Service, new[] { item });
-                    args.Result = ProcessMapBuilder.Build(item, mode);
+                    var map = ProcessMapBuilder.Build(item, mode);
+                    ProcessMapBuilder.CollapseToFit(map); // large maps open readable
+                    args.Result = map;
                 },
                 PostWorkCallBack = args =>
                 {
@@ -595,7 +597,7 @@ namespace DataverseProcessMapper
                             SvgExporter.Save(map, dialog.FileName);
                             break;
                         case ExportFormat.Png:
-                            using (var bmp = ProcessMapBuilder.RenderToBitmap(map, 2f))
+                            using (var bmp = ProcessMapBuilder.RenderToBitmap(ProcessMapBuilder.Expanded(map), 2f))
                                 bmp.Save(dialog.FileName, System.Drawing.Imaging.ImageFormat.Png);
                             break;
                         case ExportFormat.Markdown:

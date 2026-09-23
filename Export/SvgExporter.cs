@@ -15,6 +15,8 @@ namespace DataverseProcessMapper.Exporters
     {
         public static void Save(ProcessMap map, string path)
         {
+            map = ProcessMapBuilder.Expanded(map); // every step, whatever is collapsed on screen
+
             // Same page framing as the PDF export: an 8-unit margin all round.
             float w = map.CanvasSize.Width + 16;
             float h = map.CanvasSize.Height + 16;

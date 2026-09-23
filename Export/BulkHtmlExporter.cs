@@ -47,7 +47,7 @@ namespace DataverseProcessMapper.Exporters
                     var file = ExportNaming.UniqueName(usedNames,
                         ExportNaming.SafeFileName(item.Name)) + ".html";
                     HtmlExporter.Save(map, Path.Combine(folder, file));
-                    entries.Add(new IndexEntry { Item = item, File = file, Steps = map.Graph.Nodes.Count });
+                    entries.Add(new IndexEntry { Item = item, File = file, Steps = map.Graph.StepCount });
                     result.Exported++;
                 }
                 catch (Exception ex)
