@@ -88,7 +88,9 @@ namespace DataverseProcessMapper.Exporters
                 sb.AppendLine();
             }
 
+            // Start and End are the diagram's endpoints, not steps of the process.
             var counts = graph.Nodes
+                .Where(n => n.Kind != NodeKind.Start && n.Kind != NodeKind.End)
                 .GroupBy(n => n.Kind)
                 .OrderByDescending(g => g.Count())
                 .Select(g => g.Count() + " " + Plural(g.Key, g.Count()))
@@ -134,9 +136,11 @@ namespace DataverseProcessMapper.Exporters
                 sb.AppendLine(new string('#', heading) + " " + Clean(node.Label));
                 sb.AppendLine();
 
+                // "Scope · Scope" says nothing twice — only add a subtitle that differs.
                 var kind = node.Kind.ToString();
-                sb.AppendLine("*" + kind + (string.IsNullOrEmpty(node.Subtitle)
-                    ? "" : " · " + Clean(node.Subtitle)) + "*");
+                bool sameAsKind = string.IsNullOrEmpty(node.Subtitle)
+                    || node.Subtitle.Equals(kind, StringComparison.OrdinalIgnoreCase);
+                sb.AppendLine("*" + kind + (sameAsKind ? "" : " · " + Clean(node.Subtitle)) + "*");
                 sb.AppendLine();
 
                 AppendRelationships(sb, graph, node);
@@ -229,6 +233,8 @@ namespace DataverseProcessMapper.Exporters
                 case NodeKind.Empty: word = "empty branch"; break;
                 case NodeKind.Trigger: word = "trigger"; break;
                 case NodeKind.Terminate: word = "terminate step"; break;
+                case NodeKind.Scope: word = "scope"; break;
+                case NodeKind.Wait: word = "wait"; break;
                 case NodeKind.Note: word = "note"; break;
                 default: word = "action"; break;
             }

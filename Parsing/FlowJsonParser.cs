@@ -55,7 +55,7 @@ namespace DataverseProcessMapper.Parsing
                         Humanize(t.Name),
                         NodeKind.Trigger,
                         NodeShape.Stadium,
-                        id: NodeId("trigger", t.Name),
+                        id: ChildId("trigger", t.Name),
                         subtitle: ShortType((t.Value as JObject)?["type"]?.ToString()));
                     node.Details = ExtractDetails(t.Value as JObject);
                     triggerIds.Add(node.Id);
@@ -86,7 +86,8 @@ namespace DataverseProcessMapper.Parsing
         /// <summary>
         /// Adds every action in a (possibly nested) actions block and wires up the
         /// runAfter edges. <paramref name="parentRoots"/> are the node ids that a
-        /// root action of this block (empty runAfter) should connect from.
+        /// root action of this block (empty runAfter) should connect from, and
+        /// <paramref name="idPrefix"/> is the block's path (see <see cref="ChildId"/>).
         /// </summary>
         private void AddActions(ProcessGraph graph, JObject actions, IList<string> parentRoots, string idPrefix,
             string parentId = null)
@@ -103,7 +104,7 @@ namespace DataverseProcessMapper.Parsing
                     Humanize(p.Name),
                     kind,
                     shape,
-                    id: NodeId(idPrefix, p.Name),
+                    id: ChildId(idPrefix, p.Name),
                     subtitle: ShortType(type));
                 node.ParentId = parentId;
                 node.Details = ExtractDetails(body);
@@ -135,12 +136,12 @@ namespace DataverseProcessMapper.Parsing
                     }
                 }
 
-                RecurseControl(graph, body, selfId, idPrefix + "_" + Sanitize(p.Name));
+                RecurseControl(graph, body, selfId);
             }
         }
 
         /// <summary>Recurses into the nested action blocks of control actions.</summary>
-        private void RecurseControl(ProcessGraph graph, JObject body, string controlId, string idPrefix)
+        private void RecurseControl(ProcessGraph graph, JObject body, string controlId)
         {
             if (body == null) return;
 
@@ -154,19 +155,22 @@ namespace DataverseProcessMapper.Parsing
 
             if (isIf)
             {
+                var yesPath = BranchPath(controlId, "yes");
+                var noPath = BranchPath(controlId, "no");
+
                 if (trueBranch != null && trueBranch.Count > 0)
-                    AddActions(graph, trueBranch, new[] { controlId }, idPrefix + "_yes", controlId);
+                    AddActions(graph, trueBranch, new[] { controlId }, yesPath, controlId);
                 else
-                    LinkBranchPlaceholder(graph, controlId, "Yes", idPrefix + "_yes");
+                    LinkBranchPlaceholder(graph, controlId, "Yes", yesPath);
 
                 if (falseBranch != null && falseBranch.Count > 0)
-                    AddActions(graph, falseBranch, new[] { controlId }, idPrefix + "_no", controlId);
+                    AddActions(graph, falseBranch, new[] { controlId }, noPath, controlId);
                 else
-                    LinkBranchPlaceholder(graph, controlId, "No", idPrefix + "_no");
+                    LinkBranchPlaceholder(graph, controlId, "No", noPath);
 
                 // Label the first edge of each branch.
-                LabelFirstEdges(graph, controlId, idPrefix + "_yes", "Yes");
-                LabelFirstEdges(graph, controlId, idPrefix + "_no", "No");
+                LabelFirstEdges(graph, controlId, yesPath, "Yes");
+                LabelFirstEdges(graph, controlId, noPath, "No");
                 return;
             }
 
@@ -179,26 +183,28 @@ namespace DataverseProcessMapper.Parsing
                     var caseObj = c.Value as JObject;
                     var value = CaseValue(caseObj);
                     AddCaseBranch(graph, caseObj?["actions"] as JObject, controlId,
-                        CaseTitle(c.Name, value), idPrefix + "_" + Sanitize(c.Name), value, isDefault: false);
+                        CaseTitle(c.Name, value), BranchPath(controlId, "case:" + Escape(c.Name)),
+                        value, isDefault: false);
                 }
 
                 // Drawn whenever the default branch is declared, even when it is empty.
                 var defaultObj = body["default"] as JObject;
                 if (defaultObj != null)
                     AddCaseBranch(graph, defaultObj["actions"] as JObject, controlId,
-                        "default", idPrefix + "_default", null, isDefault: true);
+                        "default", BranchPath(controlId, "default"), null, isDefault: true);
                 return;
             }
 
             // Foreach / Until / Scope: a single nested "actions" block.
+            var bodyPath = BranchPath(controlId, "body");
             if (trueBranch != null && trueBranch.Count > 0)
             {
-                AddActions(graph, trueBranch, new[] { controlId }, idPrefix + "_body", controlId);
+                AddActions(graph, trueBranch, new[] { controlId }, bodyPath, controlId);
             }
             else if (IsControlType(type))
             {
                 // A container that declares no actions still says so out loud.
-                AddEmptyMarker(graph, controlId, idPrefix + "_body");
+                AddEmptyMarker(graph, controlId, bodyPath);
             }
         }
 
@@ -219,7 +225,7 @@ namespace DataverseProcessMapper.Parsing
                 : null;
 
             var chip = graph.AddNode(title, NodeKind.Case, NodeShape.Stadium,
-                id: idPrefix + "::case", subtitle: subtitle);
+                id: SyntheticId(idPrefix, "case"), subtitle: subtitle);
             chip.ParentId = switchId;
             if (isDefault)
                 chip.Details.Add(new KeyValuePair<string, string>("Runs when", "no other case matches"));
@@ -237,7 +243,7 @@ namespace DataverseProcessMapper.Parsing
         private static ProcessNode AddEmptyMarker(ProcessGraph graph, string parentId, string idPrefix, string edgeLabel = null)
         {
             var node = graph.AddNode("(no actions)", NodeKind.Empty, NodeShape.RoundedRect,
-                id: idPrefix + "::empty");
+                id: SyntheticId(idPrefix, "empty"));
             node.ParentId = parentId;
             graph.AddEdge(parentId, node.Id, edgeLabel);
             return node;
@@ -292,11 +298,12 @@ namespace DataverseProcessMapper.Parsing
             AddEmptyMarker(graph, controlId, idPrefix, label);
         }
 
-        private void LabelFirstEdges(ProcessGraph graph, string controlId, string branchPrefix, string label)
+        private void LabelFirstEdges(ProcessGraph graph, string controlId, string branchPath, string label)
         {
+            var prefix = branchPath + "/";
             foreach (var edge in graph.Edges)
             {
-                if (edge.FromId == controlId && edge.ToId.StartsWith(branchPrefix, StringComparison.Ordinal)
+                if (edge.FromId == controlId && edge.ToId.StartsWith(prefix, StringComparison.Ordinal)
                     && string.IsNullOrEmpty(edge.Label))
                 {
                     edge.Label = label;
@@ -469,7 +476,7 @@ namespace DataverseProcessMapper.Parsing
                 case "until":
                 case "do_until": return NodeKind.Loop;
                 case "terminate": return NodeKind.Terminate;
-                case "scope": return NodeKind.Note;
+                case "scope": return NodeKind.Scope;
                 default: return NodeKind.Action;
             }
         }
@@ -521,8 +528,26 @@ namespace DataverseProcessMapper.Parsing
             return actionKey.Replace('_', ' ').Trim();
         }
 
-        private static string NodeId(string prefix, string name) => prefix + "::" + name;
+        // ---------- node ids ----------
+        //
+        // An id is a path of '/'-separated segments that alternates between the
+        // flow's own names and branch roles: act/Condition/yes/Send_email. Names
+        // are escaped so they can never contain '/' or ':', which makes every
+        // path decompose one way only; nodes the parser adds itself (case chips,
+        // empty markers) end in a segment starting with ':', which no escaped
+        // name can equal. So two distinct places in a flow can never share an
+        // id, however the author named things.
 
-        private static string Sanitize(string s) => new string((s ?? "").Where(char.IsLetterOrDigit).ToArray());
+        /// <summary>Id of the flow item <paramref name="name"/> inside <paramref name="path"/>.</summary>
+        private static string ChildId(string path, string name) => path + "/" + Escape(name);
+
+        /// <summary>Path of one of a control's branches ("yes", "no", "body", "default", "case:&lt;key&gt;").</summary>
+        private static string BranchPath(string controlId, string role) => controlId + "/" + role;
+
+        /// <summary>Id of a node the parser adds to a branch itself.</summary>
+        private static string SyntheticId(string branchPath, string role) => branchPath + "/:" + role;
+
+        private static string Escape(string name) =>
+            (name ?? "").Replace("%", "%25").Replace("/", "%2F").Replace(":", "%3A");
     }
 }

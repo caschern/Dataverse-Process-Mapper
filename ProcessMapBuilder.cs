@@ -17,6 +17,9 @@ namespace DataverseProcessMapper
 
         public SizeF CanvasSize { get; set; }
         public ProcessItem Source { get; set; }
+
+        /// <summary>How the map is positioned; applied on every <see cref="ProcessMapBuilder.RefreshView"/>.</summary>
+        public LayoutMode Mode { get; set; } = ProcessMapBuilder.DefaultMode;
     }
 
     /// <summary>
@@ -28,12 +31,19 @@ namespace DataverseProcessMapper
         private static readonly FlowJsonParser FlowParser = new FlowJsonParser();
         private static readonly XamlWorkflowParser WorkflowParser = new XamlWorkflowParser();
 
-        public static ProcessMap Build(ProcessItem item)
+        /// <summary>
+        /// Nested blocks: the step after a container is drawn below the
+        /// container's frame, so the picture never shows it running alongside the
+        /// container's own steps. The flat layout remains available.
+        /// </summary>
+        public const LayoutMode DefaultMode = LayoutMode.Nested;
+
+        public static ProcessMap Build(ProcessItem item, LayoutMode mode = DefaultMode)
         {
             IProcessParser parser = item.IsModernFlow ? (IProcessParser)FlowParser : WorkflowParser;
             var graph = parser.Parse(item);
 
-            var map = new ProcessMap { Graph = graph, Source = item };
+            var map = new ProcessMap { Graph = graph, Source = item, Mode = mode };
             RefreshView(map);
             return map;
         }
@@ -47,12 +57,20 @@ namespace DataverseProcessMapper
             var view = GraphContraction.BuildView(map.Graph);
             NodeSizer.MeasureAll(view);
 
-            // Detection is purely structural (edges and ParentId), so it runs
-            // before layout: the ordering pass uses block membership to keep a
-            // region's branches together within their rank.
-            view.ParallelBlocks = ParallelBlockDetector.Detect(view);
-
-            var canvas = LayeredLayoutEngine.Layout(view);
+            SizeF canvas;
+            if (map.Mode == LayoutMode.Nested)
+            {
+                // Detects parallel regions block by block itself.
+                canvas = NestedLayoutEngine.Layout(view);
+            }
+            else
+            {
+                // Detection is purely structural (edges and ParentId), so it runs
+                // before layout: the ordering pass uses block membership to keep a
+                // region's branches together within their rank.
+                view.ParallelBlocks = ParallelBlockDetector.Detect(view);
+                canvas = LayeredLayoutEngine.Layout(view);
+            }
             canvas = EnsureTitleFits(view, canvas);
 
             map.ViewGraph = view;
@@ -84,9 +102,21 @@ namespace DataverseProcessMapper
                     b.X += shift;
                     n.Bounds = b;
                 }
-                // Routed rails are absolute X values — they move with the nodes.
+                // Rails and routed polylines are absolute X values — they move
+                // with the nodes, or multi-rank edges are left behind.
                 foreach (var e in graph.Edges)
+                {
                     if (e.RailX.HasValue) e.RailX += shift;
+                    if (e.Route != null)
+                        for (int i = 0; i < e.Route.Count; i++)
+                            e.Route[i] = new PointF(e.Route[i].X + shift, e.Route[i].Y);
+                }
+                foreach (var frame in graph.Frames)
+                {
+                    var b = frame.Bounds;
+                    b.X += shift;
+                    frame.Bounds = b;
+                }
                 return new SizeF(needed, canvas.Height);
             }
         }

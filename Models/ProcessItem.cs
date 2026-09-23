@@ -25,10 +25,17 @@ namespace DataverseProcessMapper.Models
         /// <summary>JSON definition (Power Automate / modern flows).</summary>
         public string ClientData { get; set; }
 
+        /// <summary>
+        /// True once <see cref="Xaml"/> / <see cref="ClientData"/> have been
+        /// fetched. The process list is loaded without them — they are by far the
+        /// largest columns and most processes are never opened.
+        /// </summary>
+        public bool DefinitionLoaded { get; set; }
+
         /// <summary>Logical name of the table the process runs against, when applicable.</summary>
         public string PrimaryEntity { get; set; }
 
-        /// <summary>statecode: 0 = Draft, 1 = Activated.</summary>
+        /// <summary>statecode: 0 = Draft, 1 = Activated, 2 = Suspended.</summary>
         public int State { get; set; }
 
         public DateTime? ModifiedOn { get; set; }
@@ -68,6 +75,22 @@ namespace DataverseProcessMapper.Models
             }
         }
 
-        public string StateLabel => State == 1 ? "Activated" : "Draft";
+        /// <summary>
+        /// The statecode's label. Suspended is what a flow becomes when a DLP
+        /// policy switches it off, so it must never read as Draft.
+        /// </summary>
+        public string StateLabel
+        {
+            get
+            {
+                switch (State)
+                {
+                    case 0: return "Draft";
+                    case 1: return "Activated";
+                    case 2: return "Suspended";
+                    default: return "State " + State;
+                }
+            }
+        }
     }
 }

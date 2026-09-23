@@ -55,12 +55,18 @@ namespace DataverseProcessMapper.UI
             }
         }
 
+        // Low enough that Zoom to Fit can fit very wide maps (thousands of
+        // pixels across); readable text is not the point at that
+        // scale, seeing the whole shape is.
+        private const float MinZoom = 0.05f;
+        private const float MaxZoom = 3f;
+
         public float Zoom
         {
             get => _zoom;
             set
             {
-                _zoom = value < 0.2f ? 0.2f : (value > 3f ? 3f : value);
+                _zoom = value < MinZoom ? MinZoom : (value > MaxZoom ? MaxZoom : value);
                 UpdateScrollSize();
                 Invalidate();
             }
@@ -148,9 +154,19 @@ namespace DataverseProcessMapper.UI
             // White canvas behind the diagram.
             g.FillRectangle(Brushes.White, 0, 0, _map.CanvasSize.Width, _map.CanvasSize.Height);
 
+            // Only the invalidated area needs drawing — while panning that is the
+            // strip scrolled into view, not the whole map.
+            var clip = e.ClipRectangle;
+            var visible = new RectangleF(
+                (clip.X - AutoScrollPosition.X) / _zoom,
+                (clip.Y - AutoScrollPosition.Y) / _zoom,
+                clip.Width / _zoom,
+                clip.Height / _zoom);
+            visible.Inflate(2f, 2f);
+
             using (var surface = new GdiDiagramSurface(g))
                 DiagramRenderer.Render(surface, _map.ViewGraph, _map.CanvasSize,
-                    interactive: true, highlightId: _selectedId);
+                    interactive: true, highlightId: _selectedId, visible: visible);
 
             // Selection highlight, drawn in diagram coordinates on top of everything.
             if (_selectedId != null)
@@ -242,6 +258,14 @@ namespace DataverseProcessMapper.UI
             RefreshStructure();
         }
 
+        /// <summary>Re-lays out the current map flat or as nested blocks.</summary>
+        public void SetLayoutMode(LayoutMode mode)
+        {
+            if (_map == null || _map.Mode == mode) return;
+            _map.Mode = mode;
+            RefreshStructure();
+        }
+
         /// <summary>Collapses (true) or expands (false) every container at once.</summary>
         public void SetAllCollapsed(bool collapsed)
         {
@@ -309,7 +333,7 @@ namespace DataverseProcessMapper.UI
             for (int i = _map.ViewGraph.Nodes.Count - 1; i >= 0; i--)
             {
                 var n = _map.ViewGraph.Nodes[i];
-                if (n.Bounds.Contains(pt.X, pt.Y)) return n;
+                if (DiagramRenderer.ShapeContains(n, pt)) return n;
             }
             return null;
         }

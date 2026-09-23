@@ -28,8 +28,9 @@ namespace DataverseProcessMapper.Exporters
             public int Steps;
         }
 
+        /// <param name="mode">How each process's diagram is laid out.</param>
         public static BulkExportResult Export(IList<ProcessItem> items, string folder, string setLabel,
-            Action<string> progress)
+            Action<string> progress, LayoutMode mode = ProcessMapBuilder.DefaultMode)
         {
             var result = new BulkExportResult();
             var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -42,7 +43,7 @@ namespace DataverseProcessMapper.Exporters
                 progress?.Invoke($"Exporting {i} of {items.Count}: {item.Name}");
                 try
                 {
-                    var map = ProcessMapBuilder.Build(item);
+                    var map = ProcessMapBuilder.Build(item, mode);
                     var file = ExportNaming.UniqueName(usedNames,
                         ExportNaming.SafeFileName(item.Name)) + ".html";
                     HtmlExporter.Save(map, Path.Combine(folder, file));

@@ -82,7 +82,13 @@ namespace DataverseProcessMapper.Rendering
                     return Tint(Color.FromArgb(250, 250, 250), Color.FromArgb(189, 189, 189));
                 case NodeKind.Loop:
                     return Tint(Color.FromArgb(243, 229, 245), Color.FromArgb(142, 36, 170));
+                case NodeKind.Wait:
+                    // Blue-grey: a pause, clearly apart from actions and decisions.
+                    return Tint(Color.FromArgb(236, 239, 241), Color.FromArgb(84, 110, 122));
                 case NodeKind.Note:
+                case NodeKind.Scope:
+                    // Scopes keep the neutral grey they have always had; notes are
+                    // told apart by their square corners.
                     return Tint(Color.FromArgb(245, 245, 245), Color.FromArgb(158, 158, 158));
                 case NodeKind.Action:
                 default:

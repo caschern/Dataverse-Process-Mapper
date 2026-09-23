@@ -16,7 +16,17 @@ namespace DataverseProcessMapper.Layout
     public static class LayeredLayoutEngine
     {
         /// <summary>Lays out the graph and returns the overall canvas size.</summary>
-        public static SizeF Layout(ProcessGraph graph)
+        /// <param name="topAlignRows">
+        /// Align each row's nodes on their top edge instead of their middle. The
+        /// nested layout wants this: its rows mix small steps with tall container
+        /// frames, and branches that start together should start at the same height.
+        /// </param>
+        /// <param name="centeredNodeId">
+        /// A node alone in its rank to centre over the whole layout — the nested
+        /// layout's container header, so the connector into a frame arrives
+        /// straight onto it.
+        /// </param>
+        public static SizeF Layout(ProcessGraph graph, bool topAlignRows = false, string centeredNodeId = null)
         {
             if (graph.Nodes.Count == 0) return new SizeF(200, 100);
 
@@ -44,7 +54,7 @@ namespace DataverseProcessMapper.Layout
             var byId = allNodes.ToDictionary(n => n.Id);
 
             var ranks = OrderRanks(graph, allNodes, layoutForward);
-            return Position(graph, ranks, layoutForward, byId, chains);
+            return Position(graph, ranks, layoutForward, byId, chains, topAlignRows, centeredNodeId);
         }
 
         private const float VirtualWidth = 10f;
@@ -409,7 +419,8 @@ namespace DataverseProcessMapper.Layout
         private const float LaneMinSeparation = 12f;
 
         private static SizeF Position(ProcessGraph graph, List<List<ProcessNode>> ranks,
-            List<ProcessEdge> layoutForward, Dictionary<string, ProcessNode> byId, List<Chain> chains)
+            List<ProcessEdge> layoutForward, Dictionary<string, ProcessNode> byId, List<Chain> chains,
+            bool topAlignRows, string centeredNodeId)
         {
             // Per-rank height = tallest node in that rank.
             var rankHeights = ranks.Select(r => r.Max(n => n.Bounds.Height)).ToList();
@@ -444,6 +455,19 @@ namespace DataverseProcessMapper.Layout
                 }
             float canvasWidth = maxRight + shiftAll + DiagramStyle.Margin;
 
+            // Centre the requested node over the content (before routing, so its
+            // connectors are routed from where it ends up).
+            if (centeredNodeId != null && byId.TryGetValue(centeredNodeId, out var centered))
+            {
+                var own = ranks.FirstOrDefault(r => r.Contains(centered));
+                if (own != null && own.Count == 1)
+                {
+                    var b = centered.Bounds;
+                    b.X = canvasWidth / 2f - b.Width / 2f;
+                    centered.Bounds = b;
+                }
+            }
+
             // --- Routing pass: give every horizontal run its own lane ---
             var rankIndexByValue = new Dictionary<int, int>();
             for (int r = 0; r < ranks.Count; r++)
@@ -463,7 +487,7 @@ namespace DataverseProcessMapper.Layout
                 float rowHeight = rankHeights[r];
                 foreach (var node in ranks[r])
                 {
-                    float ny = y + (rowHeight - node.Bounds.Height) / 2f;
+                    float ny = topAlignRows ? y : y + (rowHeight - node.Bounds.Height) / 2f;
                     node.Bounds = new RectangleF(node.Bounds.X, ny, node.Bounds.Width, node.Bounds.Height);
                 }
 

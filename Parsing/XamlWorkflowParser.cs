@@ -10,16 +10,15 @@ namespace DataverseProcessMapper.Parsing
     /// Parses the WF4 (Windows Workflow Foundation) XAML stored in the
     /// <c>xaml</c> column of a classic Dataverse workflow into a process graph.
     ///
-    /// Real classic-workflow XAML is verbose and varies between designer
-    /// versions, so this is a pragmatic <em>structural</em> walker rather than a
-    /// full WF4 interpreter: it walks the activity tree in document order,
-    /// emits a node for each recognised step activity, and branches for
-    /// control-flow activities (If / Flowchart-FlowDecision / While / Switch).
-    /// Unknown leaf elements are ignored to keep the map readable.
+    /// XAML written by the Dataverse workflow designer (everything under an
+    /// <c>mxswa:Workflow</c> element) is read one designer step at a time by
+    /// <see cref="ClassicDesignerWalker"/>. Any other WF4 XAML falls back to a
+    /// structural walker that emits a node per recognised activity and branches
+    /// for If / While / Switch.
     /// </summary>
     public class XamlWorkflowParser : IProcessParser
     {
-        // Activity local-names treated as visible "steps".
+        // Activity local-names treated as visible "steps" by the fallback walker.
         private static readonly HashSet<string> StepActivities = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "CreateEntity", "UpdateEntity", "AssignEntity", "DeleteEntity",
@@ -30,7 +29,7 @@ namespace DataverseProcessMapper.Parsing
             "Persist", "CustomActivity"
         };
 
-        // Containers we just descend into without emitting a node of their own.
+        // Containers the fallback walker descends into without a node of their own.
         private static readonly HashSet<string> TransparentContainers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "Sequence", "Workflow", "Activity", "ActivityBuilder", "Flowchart.StartNode"
@@ -43,6 +42,12 @@ namespace DataverseProcessMapper.Parsing
                 Title = item.Name,
                 Subtitle = "Classic Workflow" + (string.IsNullOrEmpty(item.PrimaryEntity) ? "" : " · " + item.PrimaryEntity)
             };
+
+            if (string.IsNullOrWhiteSpace(item.Xaml))
+            {
+                graph.AddNode("Empty workflow XAML.", NodeKind.Note, NodeShape.Rect);
+                return graph;
+            }
 
             XElement root;
             try
@@ -62,45 +67,54 @@ namespace DataverseProcessMapper.Parsing
             }
 
             var start = graph.AddNode("Start", NodeKind.Start, NodeShape.Stadium, id: "__start");
+            var entry = new List<Exit> { new Exit(start.Id) };
 
-            var body = FindWorkflowBody(root);
-            var tails = WalkSequence(graph, body, new List<string> { start.Id }, null);
+            var designerBody = root.DescendantsAndSelf().FirstOrDefault(IsDesignerWorkflow);
+            var tails = designerBody != null
+                ? new ClassicDesignerWalker(graph).Walk(designerBody.Elements(), entry, null)
+                : WalkSequence(graph, FindWorkflowBody(root), entry, null);
 
             // Only one node so far (the Start) means nothing recognisable was found.
             if (graph.Nodes.Count == 1)
             {
-                graph.AddNode("No recognised workflow steps were found in the XAML.\n" +
-                              "The definition may use only expressions or a custom format.",
-                              NodeKind.Note, NodeShape.Rect);
+                graph.AddNode(designerBody != null
+                        ? "This workflow has no steps."
+                        : "No recognised workflow steps were found in the XAML.\n" +
+                          "The definition may use only expressions or a custom format.",
+                    NodeKind.Note, NodeShape.Rect);
                 return graph;
             }
 
-            var end = graph.AddNode("End", NodeKind.End, NodeShape.Stadium, id: "__end");
-            foreach (var t in tails.Distinct())
-                graph.AddEdge(t, end.Id);
+            // Every path may have ended in "Stop workflow" — then there is no End to reach.
+            if (tails.Count > 0)
+            {
+                var end = graph.AddNode("End", NodeKind.End, NodeShape.Stadium, id: "__end");
+                Connect(graph, tails, end.Id);
+            }
 
             return graph;
         }
 
+        /// <summary>The designer's step container: mxswa:Workflow from the Xrm workflow SDK.</summary>
+        private static bool IsDesignerWorkflow(XElement el)
+            => el.Name.LocalName == "Workflow"
+               && el.Name.NamespaceName.IndexOf("Microsoft.Xrm.Sdk.Workflow", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        // ---------- fallback: generic WF4 XAML ----------
+
         /// <summary>Finds the element that holds the ordered workflow steps.</summary>
         private static XElement FindWorkflowBody(XElement root)
         {
-            // Prefer a Flowchart or the first Sequence anywhere in the tree.
-            var flowchart = root.Descendants().FirstOrDefault(e => Local(e) == "Flowchart");
-            if (flowchart != null) return flowchart;
-
-            var sequence = root.Descendants().FirstOrDefault(e => Local(e) == "Sequence");
-            if (sequence != null) return sequence;
-
-            return root;
+            // A Flowchart is its own body; otherwise walk from the root, whose
+            // transparent containers lead to every step rather than only the first.
+            return root.Descendants().FirstOrDefault(e => Local(e) == "Flowchart") ?? root;
         }
 
         /// <summary>
         /// Walks the children of <paramref name="container"/> as an ordered
-        /// sequence, chaining each emitted node to the previous tail(s).
-        /// Returns the tail node ids to connect onward.
+        /// sequence, chaining each emitted node to the previous exit(s).
         /// </summary>
-        private List<string> WalkSequence(ProcessGraph graph, XElement container, List<string> incoming, string parentId)
+        private List<Exit> WalkSequence(ProcessGraph graph, XElement container, List<Exit> incoming, string parentId)
         {
             var tails = incoming;
             foreach (var child in container.Elements())
@@ -115,39 +129,26 @@ namespace DataverseProcessMapper.Parsing
             return tails;
         }
 
-        /// <summary>Walks a single activity element. Returns its tail node ids.</summary>
-        private List<string> WalkNode(ProcessGraph graph, XElement el, List<string> incoming, string parentId)
+        /// <summary>Walks a single activity element. Returns its exits.</summary>
+        private List<Exit> WalkNode(ProcessGraph graph, XElement el, List<Exit> incoming, string parentId)
         {
             var name = Local(el);
 
-            // --- Control flow: If ---
             if (name.Equals("If", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("FlowDecision", StringComparison.OrdinalIgnoreCase))
-            {
                 return WalkIf(graph, el, incoming, parentId);
-            }
 
-            // --- Control flow: While / DoWhile ---
             if (name.Equals("While", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("DoWhile", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("ForEach", StringComparison.OrdinalIgnoreCase))
-            {
                 return WalkLoop(graph, el, incoming, parentId);
-            }
 
-            // --- Control flow: Switch ---
             if (name.StartsWith("Switch", StringComparison.OrdinalIgnoreCase))
-            {
                 return WalkSwitch(graph, el, incoming, parentId);
-            }
 
-            // --- Transparent containers: descend without a node ---
             if (TransparentContainers.Contains(name))
-            {
                 return WalkSequence(graph, el, incoming, parentId);
-            }
 
-            // --- Recognised step activity ---
             if (IsStep(name))
             {
                 var node = graph.AddNode(DisplayName(el) ?? Prettify(name), NodeKind.Action, NodeShape.RoundedRect,
@@ -155,19 +156,17 @@ namespace DataverseProcessMapper.Parsing
                 node.ParentId = parentId;
                 node.Details = ActivityDetails(el);
                 Connect(graph, incoming, node.Id);
-                return new List<string> { node.Id };
+                return new List<Exit> { new Exit(node.Id) };
             }
 
-            // --- Unknown element: if it has step-bearing children, descend; else ignore ---
+            // Unknown element: if it has step-bearing children, descend; else ignore.
             if (el.Elements().Any(c => !IsMetadata(c)))
-            {
                 return WalkSequence(graph, el, incoming, parentId);
-            }
 
             return incoming;
         }
 
-        private List<string> WalkIf(ProcessGraph graph, XElement el, List<string> incoming, string parentId)
+        private List<Exit> WalkIf(ProcessGraph graph, XElement el, List<Exit> incoming, string parentId)
         {
             var condition = graph.AddNode(DisplayName(el) ?? "Condition", NodeKind.Condition, NodeShape.Diamond,
                 subtitle: "Check condition");
@@ -175,42 +174,32 @@ namespace DataverseProcessMapper.Parsing
             condition.Details = ActivityDetails(el);
             Connect(graph, incoming, condition.Id);
 
-            var tails = new List<string>();
-
-            var thenEl = ChildBranch(el, "Then");
-            if (thenEl != null)
-            {
-                // A branch element that exists but holds no steps is still a real
-                // branch — mark it rather than letting it collapse out of the map.
-                var thenTails = WalkSequence(graph, thenEl, new List<string> { condition.Id }, condition.Id);
-                if (ProducedNothing(thenTails, condition.Id))
-                    thenTails = new List<string> { AddEmptyMarker(graph, condition.Id).Id };
-                LabelEdges(graph, condition.Id, "Yes");
-                tails.AddRange(thenTails);
-            }
-            else
-            {
-                tails.Add(condition.Id); // fall-through "Yes" with no body
-            }
-
-            var elseEl = ChildBranch(el, "Else");
-            if (elseEl != null)
-            {
-                var elseTails = WalkSequence(graph, elseEl, new List<string> { condition.Id }, condition.Id);
-                if (ProducedNothing(elseTails, condition.Id))
-                    elseTails = new List<string> { AddEmptyMarker(graph, condition.Id).Id };
-                LabelEdges(graph, condition.Id, "No");
-                tails.AddRange(elseTails);
-            }
-            else
-            {
-                tails.Add(condition.Id); // fall-through "No"
-            }
-
-            return tails.Distinct().ToList();
+            var tails = new List<Exit>();
+            tails.AddRange(WalkBranch(graph, ChildBranch(el, "Then"), condition.Id, "Yes"));
+            tails.AddRange(WalkBranch(graph, ChildBranch(el, "Else"), condition.Id, "No"));
+            return tails;
         }
 
-        private List<string> WalkLoop(ProcessGraph graph, XElement el, List<string> incoming, string parentId)
+        /// <summary>
+        /// One side of an If. A missing branch falls straight through, keeping its
+        /// Yes/No label for whatever follows; a branch that exists but holds no
+        /// steps is still a real branch and gets an explicit marker.
+        /// </summary>
+        private List<Exit> WalkBranch(ProcessGraph graph, XElement branch, string conditionId, string label)
+        {
+            var entry = new List<Exit> { new Exit(conditionId, label) };
+            if (branch == null) return entry;
+
+            // The branch element is the activity itself — a Sequence, or a single
+            // step — so it is walked as a node, not by its children.
+            int before = graph.Nodes.Count;
+            var tails = WalkNode(graph, branch, entry, conditionId);
+            if (graph.Nodes.Count > before) return tails;
+
+            return new List<Exit> { new Exit(AddEmptyMarker(graph, conditionId, label).Id) };
+        }
+
+        private List<Exit> WalkLoop(ProcessGraph graph, XElement el, List<Exit> incoming, string parentId)
         {
             var loop = graph.AddNode(DisplayName(el) ?? Prettify(Local(el)), NodeKind.Loop, NodeShape.RoundedRect,
                 subtitle: "Loop");
@@ -218,20 +207,24 @@ namespace DataverseProcessMapper.Parsing
             loop.Details = ActivityDetails(el);
             Connect(graph, incoming, loop.Id);
 
-            var bodyEl = ChildBranch(el, "Body") ?? el;
-            var bodyTails = WalkSequence(graph, bodyEl, new List<string> { loop.Id }, loop.Id);
-            if (ProducedNothing(bodyTails, loop.Id))
-                bodyTails = new List<string> { AddEmptyMarker(graph, loop.Id).Id };
+            var bodyEl = ChildBranch(el, "Body");
+            var entry = new List<Exit> { new Exit(loop.Id) };
+            int before = graph.Nodes.Count;
+            var bodyTails = bodyEl != null
+                ? WalkNode(graph, bodyEl, entry, loop.Id)
+                : WalkSequence(graph, el, entry, loop.Id);
+            if (graph.Nodes.Count == before)
+                bodyTails = new List<Exit> { new Exit(AddEmptyMarker(graph, loop.Id).Id) };
 
             // Back-edge from the body's tail to the loop header.
-            foreach (var t in bodyTails.Distinct())
+            foreach (var t in bodyTails.Select(t => t.Id).Distinct())
                 if (t != loop.Id)
                     graph.AddEdge(t, loop.Id, "repeat", dashed: true);
 
-            return new List<string> { loop.Id };
+            return new List<Exit> { new Exit(loop.Id) };
         }
 
-        private List<string> WalkSwitch(ProcessGraph graph, XElement el, List<string> incoming, string parentId)
+        private List<Exit> WalkSwitch(ProcessGraph graph, XElement el, List<Exit> incoming, string parentId)
         {
             var sw = graph.AddNode(DisplayName(el) ?? "Switch", NodeKind.Switch, NodeShape.Diamond,
                 subtitle: "Switch");
@@ -239,7 +232,7 @@ namespace DataverseProcessMapper.Parsing
             sw.Details = ActivityDetails(el);
             Connect(graph, incoming, sw.Id);
 
-            var tails = new List<string>();
+            var tails = new List<Exit>();
             // Cases are typically property-elements like "Switch.Cases" or inline cases.
             var caseContainers = el.Elements().Where(c => Local(c).EndsWith("Cases", StringComparison.OrdinalIgnoreCase)
                                                           || Local(c).Equals("FlowSwitch", StringComparison.OrdinalIgnoreCase));
@@ -252,27 +245,24 @@ namespace DataverseProcessMapper.Parsing
                     chip.ParentId = sw.Id;
                     graph.AddEdge(sw.Id, chip.Id);
 
-                    var branchTails = WalkSequence(graph, branch, new List<string> { chip.Id }, chip.Id);
-                    if (ProducedNothing(branchTails, chip.Id))
-                        branchTails = new List<string> { AddEmptyMarker(graph, chip.Id).Id };
+                    int before = graph.Nodes.Count;
+                    var branchTails = WalkSequence(graph, branch, new List<Exit> { new Exit(chip.Id) }, chip.Id);
+                    if (graph.Nodes.Count == before)
+                        branchTails = new List<Exit> { new Exit(AddEmptyMarker(graph, chip.Id).Id) };
                     tails.AddRange(branchTails);
                 }
             }
 
-            if (tails.Count == 0) tails.Add(sw.Id);
-            return tails.Distinct().ToList();
+            if (tails.Count == 0) tails.Add(new Exit(sw.Id));
+            return tails;
         }
 
-        /// <summary>True when walking a branch produced no nodes of its own.</summary>
-        private static bool ProducedNothing(List<string> tails, string branchRootId)
-            => tails.Count == 1 && tails[0] == branchRootId;
-
         /// <summary>Explicit "this branch does nothing" node, so empty branches stay visible.</summary>
-        private static ProcessNode AddEmptyMarker(ProcessGraph graph, string parentId)
+        private static ProcessNode AddEmptyMarker(ProcessGraph graph, string parentId, string edgeLabel = null)
         {
             var node = graph.AddNode("(no actions)", NodeKind.Empty, NodeShape.RoundedRect);
             node.ParentId = parentId;
-            graph.AddEdge(parentId, node.Id);
+            graph.AddEdge(parentId, node.Id, edgeLabel);
             return node;
         }
 
@@ -302,17 +292,12 @@ namespace DataverseProcessMapper.Parsing
             return details;
         }
 
-        private static void Connect(ProcessGraph graph, List<string> from, string to)
+        private static void Connect(ProcessGraph graph, List<Exit> from, string to)
         {
-            foreach (var f in from.Distinct())
-                graph.AddEdge(f, to);
-        }
-
-        /// <summary>Adds a branch label to the most recent unlabeled edge out of a node.</summary>
-        private static void LabelEdges(ProcessGraph graph, string fromId, string label)
-        {
-            var edge = graph.Edges.LastOrDefault(e => e.FromId == fromId && string.IsNullOrEmpty(e.Label));
-            if (edge != null) edge.Label = label;
+            var seen = new HashSet<string>();
+            foreach (var exit in from)
+                if (seen.Add(exit.Id + "|" + exit.Label))
+                    graph.AddEdge(exit.Id, to, exit.Label);
         }
 
         /// <summary>Returns the child element for a property-element branch (e.g. "If.Then").</summary>

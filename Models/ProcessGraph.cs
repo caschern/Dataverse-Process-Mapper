@@ -19,7 +19,13 @@ namespace DataverseProcessMapper.Models
         Case,
 
         /// <summary>Marker for a branch that is declared but contains no actions.</summary>
-        Empty
+        Empty,
+
+        /// <summary>A Scope action — a named group of steps, often Try / Catch / Finally.</summary>
+        Scope,
+
+        /// <summary>A classic workflow Wait: the run pauses until a condition or timeout is met.</summary>
+        Wait
     }
 
     public enum NodeShape
@@ -72,6 +78,30 @@ namespace DataverseProcessMapper.Models
             : Subtitle;
     }
 
+    /// <summary>
+    /// The box drawn around an expanded container's contents in the nested
+    /// layout: the container's header sits at its top, and the step after the
+    /// container leaves from its bottom edge.
+    /// </summary>
+    public class ContainerFrame
+    {
+        public string ContainerId { get; set; }
+        public RectangleF Bounds { get; set; }
+
+        /// <summary>1 for a top-level container, 2 inside that, and so on.</summary>
+        public int Depth { get; set; }
+    }
+
+    /// <summary>How a map is positioned.</summary>
+    public enum LayoutMode
+    {
+        /// <summary>One layered diagram; containers are headers with their steps hanging below.</summary>
+        Flat,
+
+        /// <summary>Each expanded container is a frame around its own steps (preview).</summary>
+        Nested
+    }
+
     /// <summary>A directed connector between two nodes.</summary>
     public class ProcessEdge
     {
@@ -115,12 +145,26 @@ namespace DataverseProcessMapper.Models
         /// </summary>
         public List<ParallelBlock> ParallelBlocks { get; set; } = new List<ParallelBlock>();
 
+        /// <summary>Container frames, outermost first. Empty in the flat layout.</summary>
+        public List<ContainerFrame> Frames { get; set; } = new List<ContainerFrame>();
+
         private readonly Dictionary<string, ProcessNode> _byId = new Dictionary<string, ProcessNode>();
         private int _auto;
 
         public ProcessNode AddNode(string label, NodeKind kind, NodeShape shape, string id = null, string subtitle = null)
         {
-            id = id ?? "n" + (_auto++);
+            if (id == null)
+            {
+                do id = "n" + (_auto++);
+                while (_byId.ContainsKey(id));
+            }
+            else if (_byId.ContainsKey(id))
+            {
+                // A second node under the same id would silently take over the
+                // lookup and orphan the first — a parser bug, so fail loudly.
+                throw new System.ArgumentException("Duplicate node id: " + id, nameof(id));
+            }
+
             var node = new ProcessNode
             {
                 Id = id,

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using DataverseProcessMapper.Layout;
 using DataverseProcessMapper.Models;
 
 namespace DataverseProcessMapper.Exporters
@@ -57,7 +58,9 @@ namespace DataverseProcessMapper.Exporters
                         File = file,
                         Steps = map.Graph.Nodes.Count,
                         Trigger = trigger?.Label,
-                        ParallelGroups = map.ViewGraph?.ParallelBlocks?.Count ?? 0
+                        // Counted from the process, the same way its own document
+                        // counts them — not from however the diagram was laid out.
+                        ParallelGroups = ParallelBlockDetector.Detect(map.Graph).Count
                     });
                     result.Exported++;
                 }

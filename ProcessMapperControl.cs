@@ -42,6 +42,8 @@ namespace DataverseProcessMapper
         private ToolStripButton _exportAllButton;
         private ToolStripButton _exportAllMarkdownButton;
         private ToolStripButton _fitButton;
+        private ToolStripButton _nestedButton;
+        private LayoutMode _layoutMode = ProcessMapBuilder.DefaultMode;
         private ToolStripTextBox _findBox;
         private ToolStripLabel _status;
 
@@ -64,6 +66,7 @@ namespace DataverseProcessMapper
         public ProcessMapperControl()
         {
             BuildUi();
+            ConnectionUpdated += (s, e) => ClearLoadedProcesses();
         }
 
         // ---------------------------------------------------------------- UI
@@ -143,6 +146,21 @@ namespace DataverseProcessMapper
             };
             _fitButton.Click += (s, e) => CurrentPanel()?.ZoomToFit();
 
+            _nestedButton = new ToolStripButton("Nested layout")
+            {
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                CheckOnClick = true,
+                Checked = _layoutMode == LayoutMode.Nested, // set before the handler is attached
+                ToolTipText = "Each scope, condition, case and loop is a frame around its steps, " +
+                              "with the next step below the frame. Turn off for the flat layout."
+            };
+            _nestedButton.CheckedChanged += (s, e) =>
+            {
+                _layoutMode = _nestedButton.Checked ? LayoutMode.Nested : LayoutMode.Flat;
+                _flowPanel.SetLayoutMode(_layoutMode);
+                _workflowPanel.SetLayoutMode(_layoutMode);
+            };
+
             _findBox = new ToolStripTextBox { Width = 170, ToolTipText = "Find a step by name (Enter = next match)" };
             _findBox.TextBox.HandleCreated += (s, e) =>
                 SendMessage(_findBox.TextBox.Handle, EM_SETCUEBANNER, (IntPtr)1, "Find step…");
@@ -171,7 +189,7 @@ namespace DataverseProcessMapper
                 _loadButton, new ToolStripSeparator(),
                 _pdfButton, _htmlButton, _svgButton, _pngButton, _markdownButton, new ToolStripSeparator(),
                 _exportAllButton, _exportAllMarkdownButton, new ToolStripSeparator(),
-                _fitButton, _findBox, new ToolStripSeparator(),
+                _fitButton, _nestedButton, _findBox, new ToolStripSeparator(),
                 _status, closeButton
             });
 
@@ -460,28 +478,65 @@ namespace DataverseProcessMapper
 
         // -------------------------------------------------------- previewing
 
+        // Bumped per preview request; a result that arrives after a newer request
+        // started is stale and dropped, so quick arrow-key browsing can never
+        // land an older map on top of the one now selected.
+        private int _previewRequest;
+
         private void PreviewSelection(ListView list, DiagramPanel panel)
         {
             var item = SelectedItem(list);
             if (item == null) { UpdateButtons(); return; }
 
-            try
+            // Fetching the definition and laying out a large map both take time,
+            // so neither runs on the UI thread.
+            int request = ++_previewRequest;
+            var mode = _layoutMode;
+            WorkAsync(new WorkAsyncInfo
             {
-                Cursor = Cursors.WaitCursor;
-                var map = ProcessMapBuilder.Build(item);
-                panel.SetMap(map);
-                panel.ZoomToFit();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, "Could not render this process:\n\n" + ex.Message,
-                    "Render error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-            finally
-            {
-                Cursor = Cursors.Default;
-                UpdateButtons();
-            }
+                Message = item.DefinitionLoaded ? "Building the map..." : "Loading the definition...",
+                Work = (worker, args) =>
+                {
+                    if (!item.DefinitionLoaded)
+                        WorkflowRepository.LoadDefinitions(Service, new[] { item });
+                    args.Result = ProcessMapBuilder.Build(item, mode);
+                },
+                PostWorkCallBack = args =>
+                {
+                    if (request != _previewRequest) return;
+                    if (args.Error != null)
+                    {
+                        MessageBox.Show(this, "Could not render this process:\n\n" + args.Error.Message,
+                            "Render error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                    else
+                    {
+                        panel.SetMap((ProcessMap)args.Result);
+                        panel.ZoomToFit();
+                    }
+                    UpdateButtons();
+                }
+            });
+        }
+
+        /// <summary>
+        /// A new connection makes the loaded lists stale — they belong to the
+        /// previous environment, and their definitions are fetched lazily, so
+        /// they would be looked up in the wrong one. Any load waiting on the
+        /// connection runs asynchronously and fills the lists afterwards.
+        /// </summary>
+        private void ClearLoadedProcesses()
+        {
+            _previewRequest++;
+            _allFlows = new List<ProcessItem>();
+            _allWorkflows = new List<ProcessItem>();
+            Fill(_flowList, _allFlows, flowColumns: true);
+            Fill(_workflowList, _allWorkflows, flowColumns: false);
+            _flowPanel.SetMap(null);
+            _workflowPanel.SetMap(null);
+            _status.Text = "Not loaded";
+            _status.ForeColor = Color.Gray;
+            UpdateButtons();
         }
 
         // ---------------------------------------------------------- exporting
@@ -501,7 +556,7 @@ namespace DataverseProcessMapper
 
             using (var dialog = new SaveFileDialog())
             {
-                var safeName = MakeSafeFileName(map.Graph.Title ?? "process-map");
+                var safeName = ExportNaming.SafeFileName(map.Graph.Title ?? "process-map");
                 switch (format)
                 {
                     case ExportFormat.Pdf:
@@ -612,6 +667,7 @@ namespace DataverseProcessMapper
             }
 
             var setLabel = _tabs.SelectedIndex == 0 ? "Power Automate Flows" : "Classic Workflows";
+            var mode = _layoutMode; // the diagrams match what is on screen
 
             WorkAsync(new WorkAsyncInfo
             {
@@ -619,9 +675,14 @@ namespace DataverseProcessMapper
                 Work = (worker, args) =>
                 {
                     Action<string> report = s => worker.ReportProgress(0, s);
+
+                    // The list was loaded without definitions; fetch the missing ones.
+                    WorkflowRepository.LoadDefinitions(Service, items,
+                        (done, total) => report($"Loading definitions ({done} of {total})..."));
+
                     args.Result = bulkMarkdown
                         ? BulkMarkdownExporter.Export(items, folder, setLabel, report)
-                        : BulkHtmlExporter.Export(items, folder, setLabel, report);
+                        : BulkHtmlExporter.Export(items, folder, setLabel, report, mode);
                 },
                 ProgressChanged = args => SetWorkingMessage(args.UserState?.ToString()),
                 PostWorkCallBack = args =>
@@ -671,13 +732,6 @@ namespace DataverseProcessMapper
             bool hasList = CurrentList()?.Items.Count > 0;
             _exportAllButton.Enabled = hasList;
             _exportAllMarkdownButton.Enabled = hasList;
-        }
-
-        private static string MakeSafeFileName(string name)
-        {
-            foreach (var c in System.IO.Path.GetInvalidFileNameChars())
-                name = name.Replace(c, '_');
-            return name.Length > 80 ? name.Substring(0, 80) : name;
         }
     }
 }

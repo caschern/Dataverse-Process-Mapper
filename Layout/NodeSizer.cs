@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Text;
@@ -15,16 +16,14 @@ namespace DataverseProcessMapper.Layout
     {
         public static void MeasureAll(ProcessGraph graph)
         {
-            using (var bmp = new Bitmap(1, 1))
-            using (var g = Graphics.FromImage(bmp))
+            using (var m = new TextMeasurer())
             {
-                g.TextRenderingHint = TextRenderingHint.AntiAlias;
                 foreach (var node in graph.Nodes)
-                    Measure(g, node);
+                    Measure(m, node);
             }
         }
 
-        private static void Measure(Graphics g, ProcessNode node)
+        private static void Measure(TextMeasurer m, ProcessNode node)
         {
             var labelFont = DiagramStyle.LabelFont;
             bool diamond = node.Shape == NodeShape.Diamond;
@@ -38,19 +37,19 @@ namespace DataverseProcessMapper.Layout
                 ? DiagramStyle.NodeMaxWidth * 0.62f
                 : DiagramStyle.NodeMaxWidth - 2 * DiagramStyle.NodePadX;
 
-            node.Lines = WrapText(g, node.Label, labelFont, wrapWidth);
+            node.Lines = WrapText(m, node.Label, labelFont, wrapWidth);
 
             float textWidth = 0f;
             foreach (var line in node.Lines)
             {
-                var size = MeasureString(g, line, labelFont);
+                var size = m.Measure(line, labelFont);
                 if (size.Width > textWidth) textWidth = size.Width;
             }
 
             var subtitle = node.DisplaySubtitle;
             if (!string.IsNullOrEmpty(subtitle))
             {
-                var subSize = MeasureString(g, subtitle, DiagramStyle.SubtitleFont);
+                var subSize = m.Measure(subtitle, DiagramStyle.SubtitleFont);
                 if (subSize.Width > textWidth) textWidth = subSize.Width;
             }
 
@@ -71,7 +70,7 @@ namespace DataverseProcessMapper.Layout
             node.Bounds = new RectangleF(0, 0, width, height);
         }
 
-        private static List<string> WrapText(Graphics g, string text, DiagramFont font, float maxWidth)
+        private static List<string> WrapText(TextMeasurer m, string text, DiagramFont font, float maxWidth)
         {
             var lines = new List<string>();
             if (string.IsNullOrEmpty(text)) { lines.Add(""); return lines; }
@@ -83,7 +82,7 @@ namespace DataverseProcessMapper.Layout
                 foreach (var word in words)
                 {
                     var candidate = current.Length == 0 ? word : current + " " + word;
-                    if (MeasureString(g, candidate, font).Width > maxWidth && current.Length > 0)
+                    if (m.Measure(candidate, font).Width > maxWidth && current.Length > 0)
                     {
                         lines.Add(current);
                         current = word;
@@ -96,9 +95,9 @@ namespace DataverseProcessMapper.Layout
                     // A single token with nowhere to break — a GUID case value, a
                     // URL, a spaceless expression — still overflows the line above.
                     // Split it by character so it stays inside the shape.
-                    while (MeasureString(g, current, font).Width > maxWidth)
+                    while (m.Measure(current, font).Width > maxWidth)
                     {
-                        var head = LongestPrefixThatFits(g, current, font, maxWidth);
+                        var head = LongestPrefixThatFits(m, current, font, maxWidth);
                         if (head.Length == 0 || head.Length == current.Length) break;
                         lines.Add(head);
                         current = current.Substring(head.Length);
@@ -117,24 +116,55 @@ namespace DataverseProcessMapper.Layout
         }
 
         /// <summary>Longest leading run of <paramref name="s"/> that fits the width (at least one character).</summary>
-        private static string LongestPrefixThatFits(Graphics g, string s, DiagramFont font, float maxWidth)
+        private static string LongestPrefixThatFits(TextMeasurer m, string s, DiagramFont font, float maxWidth)
         {
-            int count = s.Length;
-            while (count > 1 && MeasureString(g, s.Substring(0, count), font).Width > maxWidth)
-                count--;
-            return s.Substring(0, count);
+            // Binary search: a prefix only gets wider as it grows.
+            int lo = 1, hi = s.Length;
+            while (lo < hi)
+            {
+                int mid = (lo + hi + 1) / 2;
+                if (m.Measure(s.Substring(0, mid), font).Width > maxWidth) hi = mid - 1;
+                else lo = mid;
+            }
+            return s.Substring(0, lo);
         }
 
         private static string Truncate(string s) => s.Length > 24 ? s.Substring(0, 24) : s;
 
-        private static SizeF MeasureString(Graphics g, string s, DiagramFont font)
+        private static float Clamp(float v, float min, float max) => v < min ? min : (v > max ? max : v);
+
+        /// <summary>
+        /// An offscreen measuring context that creates each font once per pass
+        /// rather than once per measurement — wrapping measures the same few
+        /// fonts hundreds of times on a large map.
+        /// </summary>
+        private sealed class TextMeasurer : IDisposable
         {
-            using (var f = new Font(font.Family, font.Size, font.Bold ? FontStyle.Bold : FontStyle.Regular))
+            private readonly Bitmap _bmp = new Bitmap(1, 1);
+            private readonly Graphics _g;
+            private readonly Dictionary<string, Font> _fonts = new Dictionary<string, Font>();
+
+            public TextMeasurer()
             {
-                return g.MeasureString(s, f, 10000, StringFormat.GenericTypographic);
+                _g = Graphics.FromImage(_bmp);
+                _g.TextRenderingHint = TextRenderingHint.AntiAlias;
+            }
+
+            public SizeF Measure(string s, DiagramFont font)
+            {
+                var key = font.Family + "|" + font.Size + "|" + font.Bold;
+                Font f;
+                if (!_fonts.TryGetValue(key, out f))
+                    _fonts[key] = f = new Font(font.Family, font.Size, font.Bold ? FontStyle.Bold : FontStyle.Regular);
+                return _g.MeasureString(s, f, 10000, StringFormat.GenericTypographic);
+            }
+
+            public void Dispose()
+            {
+                foreach (var f in _fonts.Values) f.Dispose();
+                _g.Dispose();
+                _bmp.Dispose();
             }
         }
-
-        private static float Clamp(float v, float min, float max) => v < min ? min : (v > max ? max : v);
     }
 }

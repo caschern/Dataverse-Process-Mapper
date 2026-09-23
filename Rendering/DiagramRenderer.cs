@@ -17,20 +17,31 @@ namespace DataverseProcessMapper.Rendering
         private static readonly Color BlockBorderColor = Color.FromArgb(0, 137, 123);
         private static readonly Color BlockCaptionColor = Color.FromArgb(0, 121, 107);
         private const float BlockPad = 14f;
+        // Vertically the outline stays close to the branches: the fan-out and
+        // fan-in lanes (and their "always" chips) run about a half-gap away,
+        // and a border on the same line would run through them.
+        private const float BlockPadY = 8f;
 
         // Selection highlighting: the selected node's edges pop, everything else recedes.
         private static readonly Color HighlightEdgeColor = Color.FromArgb(37, 118, 220);
         private static readonly Color DimEdgeColor = Color.FromArgb(214, 218, 224);
         private static readonly Color DimLabelColor = Color.FromArgb(196, 201, 208);
 
+        /// <param name="visible">
+        /// The part of the diagram being painted, in diagram coordinates; anything
+        /// wholly outside it is skipped. A pan exposes only a thin strip, so this
+        /// keeps a repaint proportional to what is on screen rather than to the
+        /// size of the map. Null draws everything (exports).
+        /// </param>
         public static void Render(IDiagramSurface surface, ProcessGraph graph, SizeF canvas,
-            bool interactive = false, string highlightId = null)
+            bool interactive = false, string highlightId = null, RectangleF? visible = null)
         {
-            DrawTitle(surface, graph, canvas);
-            DrawParallelBlocks(surface, graph);
+            if (Shows(visible, new RectangleF(0, 0, canvas.Width, DiagramStyle.Margin + 32f)))
+                DrawTitle(surface, graph, canvas);
+            DrawFrames(surface, graph, visible);
+            DrawParallelBlocks(surface, graph, visible);
 
             bool highlight = interactive && !string.IsNullOrEmpty(highlightId);
-            var lanes = AssignEdgeLanes(graph);
             var labels = new List<EdgeLabel>();
 
             // Highlighted edges draw last so they sit on top of dimmed ones.
@@ -50,16 +61,16 @@ namespace DataverseProcessMapper.Rendering
                     : DiagramStyle.EdgeLabelColor;
                 float width = incident ? 2.2f : 1.4f;
 
-                DrawEdge(surface, graph, edge, lanes.TryGetValue(edge, out var off) ? off : 0f,
-                    labels, stroke, width, labelColor);
+                DrawEdge(surface, graph, edge, labels, stroke, width, labelColor, visible);
             }
 
             foreach (var node in graph.Nodes)
-                DrawNode(surface, node);
+                if (Shows(visible, RectangleF.Inflate(node.Bounds, 4f, 4f)))
+                    DrawNode(surface, node);
 
             // Expand/collapse glyphs only make sense on screen, not in exports.
             if (interactive)
-                DrawToggleGlyphs(surface, graph);
+                DrawToggleGlyphs(surface, graph, visible);
 
             // If two label chips collide, slide the later one to the RIGHT along
             // its lane — pushing down would leave the node-free gap band and
@@ -84,9 +95,12 @@ namespace DataverseProcessMapper.Rendering
                 }
             }
 
-            // Labels go last so no connector line can cross their text.
+            // Labels go last so no connector line can cross their text. Their
+            // positions were settled over every edge above, visible or not, so a
+            // partial repaint puts each chip exactly where the full paint did.
             foreach (var label in labels)
             {
+                if (!Shows(visible, label.Backing)) continue;
                 surface.FillRoundedRect(Color.White, label.Backing, 3f);
                 surface.DrawString(label.Text, DiagramStyle.EdgeLabelFont, label.Color,
                     label.Backing.X + 3f, label.Backing.Y + 1f);
@@ -106,7 +120,23 @@ namespace DataverseProcessMapper.Rendering
         public static RectangleF ToggleRect(ProcessNode n)
             => new RectangleF(n.Bounds.Right - 8f, n.Bounds.Y - 6f, 14f, 14f);
 
-        private static void DrawToggleGlyphs(IDiagramSurface s, ProcessGraph graph)
+        /// <summary>
+        /// Whether a point is on the node's drawn shape. A diamond fills only
+        /// half its bounding box, so its corners are empty canvas — a click
+        /// there belongs to whatever is behind it, not the condition.
+        /// </summary>
+        public static bool ShapeContains(ProcessNode node, PointF pt)
+        {
+            var r = node.Bounds;
+            if (!r.Contains(pt)) return false;
+            if (node.Shape != NodeShape.Diamond) return true;
+
+            float dx = Math.Abs(pt.X - (r.X + r.Width / 2f)) / (r.Width / 2f);
+            float dy = Math.Abs(pt.Y - (r.Y + r.Height / 2f)) / (r.Height / 2f);
+            return dx + dy <= 1f;
+        }
+
+        private static void DrawToggleGlyphs(IDiagramSurface s, ProcessGraph graph, RectangleF? visible)
         {
             var expandedContainers = new HashSet<string>();
             foreach (var n in graph.Nodes)
@@ -119,6 +149,7 @@ namespace DataverseProcessMapper.Rendering
                 if (!collapsed && !expanded) continue;
 
                 var r = ToggleRect(n);
+                if (!Shows(visible, r)) continue;
                 s.FillRoundedRect(Color.White, r, 3f);
                 s.DrawRoundedRect(DiagramStyle.EdgeColor, 1f, r, 3f);
 
@@ -132,46 +163,34 @@ namespace DataverseProcessMapper.Rendering
             }
         }
 
-        /// <summary>
-        /// Spreads the horizontal runs of orthogonal edges that share the same
-        /// inter-rank gap onto separate "lanes" so they don't overlap.
-        /// Returns a vertical offset (from the gap's midline) per edge.
-        /// </summary>
-        private static Dictionary<ProcessEdge, float> AssignEdgeLanes(ProcessGraph graph)
+        // Container frames (nested layout): alternating fills keep nesting legible
+        // when frames sit several deep.
+        private static readonly Color FrameBorderColor = Color.FromArgb(203, 209, 218);
+        private static readonly Color FrameFillOdd = Color.FromArgb(247, 248, 250);
+        private static readonly Color FrameFillEven = Color.White;
+
+        /// <summary>Draws container frames behind everything else, outermost first.</summary>
+        private static void DrawFrames(IDiagramSurface s, ProcessGraph graph, RectangleF? visible)
         {
-            const float laneSpacing = 8f;
-            float maxOffset = DiagramStyle.VerticalGap / 2f - 8f;
-
-            var result = new Dictionary<ProcessEdge, float>();
-
-            var jogging = graph.Edges
-                .Where(e => !e.IsBack)
-                .Select(e => new { Edge = e, From = graph[e.FromId], To = graph[e.ToId] })
-                .Where(x => x.From != null && x.To != null)
-                .Select(x => new
-                {
-                    x.Edge,
-                    StartX = x.From.Bounds.X + x.From.Bounds.Width / 2f,
-                    EndX = x.To.Bounds.X + x.To.Bounds.Width / 2f,
-                    MidY = (x.From.Bounds.Bottom + x.To.Bounds.Y) / 2f
-                })
-                .Where(x => Math.Abs(x.StartX - x.EndX) >= 0.5f); // straight drops need no lane
-
-            // Edges whose horizontal run lands in the same gap collide; group them.
-            foreach (var group in jogging.GroupBy(x => (int)Math.Round(x.MidY / 4f)))
+            if (graph.Frames == null) return;
+            foreach (var f in graph.Frames.OrderBy(f => f.Depth))
             {
-                var list = group.OrderBy(x => Math.Min(x.StartX, x.EndX)).ToList();
-                for (int i = 0; i < list.Count; i++)
-                {
-                    float offset = (i - (list.Count - 1) / 2f) * laneSpacing;
-                    if (offset > maxOffset) offset = maxOffset;
-                    if (offset < -maxOffset) offset = -maxOffset;
-                    result[list[i].Edge] = offset;
-                }
+                if (!Shows(visible, RectangleF.Inflate(f.Bounds, 2f, 2f))) continue;
+                s.FillRoundedRect(f.Depth % 2 == 1 ? FrameFillOdd : FrameFillEven, f.Bounds, DiagramStyle.CornerRadius);
+                s.DrawRoundedRect(FrameBorderColor, 1f, f.Bounds, DiagramStyle.CornerRadius);
             }
-
-            return result;
         }
+
+        /// <summary>A node's extent on the canvas: its frame when it is an expanded container.</summary>
+        private static RectangleF Extent(ProcessGraph graph, ProcessNode node)
+        {
+            var frame = graph.Frames?.FirstOrDefault(f => f.ContainerId == node.Id);
+            return frame != null ? frame.Bounds : node.Bounds;
+        }
+
+        /// <summary>True when nothing restricts the paint, or the area overlaps it.</summary>
+        private static bool Shows(RectangleF? visible, RectangleF area)
+            => visible == null || visible.Value.IntersectsWith(area);
 
         /// <summary>
         /// Outlines each proven parallel region and captions it, so concurrency
@@ -179,7 +198,7 @@ namespace DataverseProcessMapper.Rendering
         /// Nothing here moves a node — if a block's members are not contiguous on
         /// the canvas, the boundary would enclose unrelated steps and is skipped.
         /// </summary>
-        private static void DrawParallelBlocks(IDiagramSurface s, ProcessGraph graph)
+        private static void DrawParallelBlocks(IDiagramSurface s, ProcessGraph graph, RectangleF? visible)
         {
             if (graph.ParallelBlocks == null || graph.ParallelBlocks.Count == 0) return;
 
@@ -191,8 +210,9 @@ namespace DataverseProcessMapper.Rendering
                     .ToList();
                 if (members.Count == 0) continue;
 
-                var box = Union(members.Select(n => n.Bounds));
-                box = RectangleF.Inflate(box, BlockPad, BlockPad);
+                var box = Union(members.Select(n => Extent(graph, n)));
+                box = RectangleF.Inflate(box, BlockPad, BlockPadY);
+                if (!Shows(visible, RectangleF.Inflate(box, 2f, 10f))) continue; // incl. the caption
 
                 // Contiguity check: any unrelated node overlapping the box means
                 // the outline would claim steps that are not part of this region.
@@ -315,12 +335,36 @@ namespace DataverseProcessMapper.Rendering
 
         // ---------- edges ----------
 
-        private static void DrawEdge(IDiagramSurface s, ProcessGraph graph, ProcessEdge edge, float laneOffset,
-            List<EdgeLabel> labels, Color stroke, float width, Color labelColor)
+        private static void DrawEdge(IDiagramSurface s, ProcessGraph graph, ProcessEdge edge,
+            List<EdgeLabel> labels, Color stroke, float width, Color labelColor, RectangleF? visible)
+        {
+            var path = EdgePath(graph, edge);
+            if (path == null) return;
+
+            if (Shows(visible, RectangleF.Inflate(Bounds(path), 6f, 6f))) // arrowhead + stroke
+            {
+                for (int i = 0; i < path.Length - 1; i++)
+                    s.DrawLine(stroke, width, path[i].X, path[i].Y, path[i + 1].X, path[i + 1].Y,
+                        edge.Dashed || edge.IsBack);
+
+                DrawArrowHead(s, path[path.Length - 2], path[path.Length - 1], stroke);
+            }
+
+            if (!string.IsNullOrEmpty(edge.Label))
+                QueueLabel(s, edge, path, labels, labelColor);
+        }
+
+        /// <summary>
+        /// The polyline an edge is drawn along, from its source to the arrow tip:
+        /// its routed polyline when the layout gave it one, otherwise a straight
+        /// drop or a V-H-V jog on its lane; loops return up a right-hand rail.
+        /// Null when an endpoint is not in the graph.
+        /// </summary>
+        public static PointF[] EdgePath(ProcessGraph graph, ProcessEdge edge)
         {
             var from = graph[edge.FromId];
             var to = graph[edge.ToId];
-            if (from == null || to == null) return;
+            if (from == null || to == null) return null;
 
             PointF start, end;
             PointF[] path;
@@ -358,8 +402,8 @@ namespace DataverseProcessMapper.Rendering
                 else
                 {
                     // Orthogonal V-H-V route on the lane assigned by the layout
-                    // engine's routing pass; midpoint + offset as a fallback.
-                    float midY = edge.LaneY ?? ((start.Y + end.Y) / 2f + laneOffset);
+                    // engine's routing pass; the midpoint as a fallback.
+                    float midY = edge.LaneY ?? (start.Y + end.Y) / 2f;
                     path = new[]
                     {
                         start,
@@ -369,46 +413,55 @@ namespace DataverseProcessMapper.Rendering
                     };
                 }
             }
+            return path;
+        }
 
-            for (int i = 0; i < path.Length - 1; i++)
-                s.DrawLine(stroke, width, path[i].X, path[i].Y, path[i + 1].X, path[i + 1].Y,
-                    edge.Dashed || edge.IsBack);
-
-            DrawArrowHead(s, path[path.Length - 2], path[path.Length - 1], stroke);
-
-            if (!string.IsNullOrEmpty(edge.Label))
+        private static void QueueLabel(IDiagramSurface s, ProcessEdge edge, PointF[] path,
+            List<EdgeLabel> labels, Color labelColor)
+        {
+            // Anchor the label to the FIRST horizontal run of the path: those
+            // lie in the gaps between rows, which are guaranteed node-free.
+            // A vertical mid-segment (multi-rank routes) would drop the chip
+            // on top of node boxes.
+            var mid = default(PointF);
+            bool found = false;
+            for (int i = 0; i < path.Length - 1 && !found; i++)
             {
-                // Anchor the label to the FIRST horizontal run of the path: those
-                // lie in the gaps between rows, which are guaranteed node-free.
-                // A vertical mid-segment (multi-rank routes) would drop the chip
-                // on top of node boxes.
-                var mid = default(PointF);
-                bool found = false;
-                for (int i = 0; i < path.Length - 1 && !found; i++)
+                if (Math.Abs(path[i].Y - path[i + 1].Y) < 0.01f &&
+                    Math.Abs(path[i].X - path[i + 1].X) >= 0.5f)
                 {
-                    if (Math.Abs(path[i].Y - path[i + 1].Y) < 0.01f &&
-                        Math.Abs(path[i].X - path[i + 1].X) >= 0.5f)
-                    {
-                        mid = new PointF((path[i].X + path[i + 1].X) / 2f, path[i].Y);
-                        found = true;
-                    }
+                    mid = new PointF((path[i].X + path[i + 1].X) / 2f, path[i].Y);
+                    found = true;
                 }
-                if (!found)
-                    mid = new PointF(path[0].X, edge.LaneY ?? (path[0].Y + 14f)); // its reserved label lane
-
-                var size = s.MeasureString(edge.Label, DiagramStyle.EdgeLabelFont);
-
-                // Centered on the connector; queued and drawn after all edges
-                // (with a white backing chip) so no line crosses the text.
-                float lx = mid.X - size.Width / 2f;
-                float ly = mid.Y - size.Height / 2f;
-                labels.Add(new EdgeLabel
-                {
-                    Text = edge.Label,
-                    Backing = new RectangleF(lx - 3f, ly - 1f, size.Width + 6f, size.Height + 2f),
-                    Color = labelColor
-                });
             }
+            if (!found)
+                mid = new PointF(path[0].X, edge.LaneY ?? (path[0].Y + 14f)); // its reserved label lane
+
+            var size = s.MeasureString(edge.Label, DiagramStyle.EdgeLabelFont);
+
+            // Centered on the connector; queued and drawn after all edges
+            // (with a white backing chip) so no line crosses the text.
+            float lx = mid.X - size.Width / 2f;
+            float ly = mid.Y - size.Height / 2f;
+            labels.Add(new EdgeLabel
+            {
+                Text = edge.Label,
+                Backing = new RectangleF(lx - 3f, ly - 1f, size.Width + 6f, size.Height + 2f),
+                Color = labelColor
+            });
+        }
+
+        private static RectangleF Bounds(PointF[] path)
+        {
+            float minX = path[0].X, maxX = path[0].X, minY = path[0].Y, maxY = path[0].Y;
+            foreach (var p in path)
+            {
+                if (p.X < minX) minX = p.X;
+                if (p.X > maxX) maxX = p.X;
+                if (p.Y < minY) minY = p.Y;
+                if (p.Y > maxY) maxY = p.Y;
+            }
+            return RectangleF.FromLTRB(minX, minY, maxX, maxY);
         }
 
         private static void DrawArrowHead(IDiagramSurface s, PointF from, PointF to, Color color)

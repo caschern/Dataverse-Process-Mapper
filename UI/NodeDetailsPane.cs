@@ -23,6 +23,8 @@ namespace DataverseProcessMapper.UI
         private readonly ToolStripMenuItem _copyMenuItem;
         private readonly ToolStripMenuItem _fxbMenuItem;
         private readonly Font _monoFont = new Font("Consolas", 8.25f);
+        private readonly Font _titleFont = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        private readonly ContextMenuStrip _menu = new ContextMenuStrip();
         private string _fetchXml; // first complete fetchXml on the selected node
 
         /// <summary>Raised when the user asks to open a fetchXml in FetchXML Builder.</summary>
@@ -86,15 +88,14 @@ namespace DataverseProcessMapper.UI
                 var value = CurrentValue();
                 if (IsCompleteFetchXml(value)) FetchXmlRequested?.Invoke(value);
             });
-            var menu = new ContextMenuStrip();
-            menu.Items.Add(_copyMenuItem);
-            menu.Items.Add(_fxbMenuItem);
-            menu.Opening += (s, e) =>
+            _menu.Items.Add(_copyMenuItem);
+            _menu.Items.Add(_fxbMenuItem);
+            _menu.Opening += (s, e) =>
             {
                 _copyMenuItem.Enabled = !string.IsNullOrEmpty(CurrentValue());
                 _fxbMenuItem.Enabled = IsCompleteFetchXml(CurrentValue());
             };
-            _grid.ContextMenuStrip = menu;
+            _grid.ContextMenuStrip = _menu;
             _grid.CellMouseDown += (s, e) =>
             {
                 // Right-click selects the row under the cursor before the menu opens.
@@ -121,7 +122,7 @@ namespace DataverseProcessMapper.UI
             _title = new Label
             {
                 Dock = DockStyle.Top,
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                Font = _titleFont,
                 AutoEllipsis = true,
                 Height = 22
             };
@@ -253,6 +254,18 @@ namespace DataverseProcessMapper.UI
 
             int maxAllowed = Math.Min(MaxWidthCap, Parent.ClientSize.Width / 2);
             Width = Math.Max(MinWidth, Math.Min(desired, maxAllowed));
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            // Children first — they still reference the fonts while disposing.
+            base.Dispose(disposing);
+            if (disposing)
+            {
+                _menu.Dispose();
+                _monoFont.Dispose();
+                _titleFont.Dispose();
+            }
         }
     }
 }

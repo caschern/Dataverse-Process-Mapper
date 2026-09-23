@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using DataverseProcessMapper.Models;
 using Microsoft.Xrm.Sdk;
 using Microsoft.Xrm.Sdk.Query;
@@ -17,9 +19,15 @@ namespace DataverseProcessMapper.Data
         public const int CategoryClassicWorkflow = 0;
         public const int CategoryModernFlow = 5;
 
+        // Rows per request when fetching definitions for many processes at once.
+        private const int DefinitionBatchSize = 50;
+
         /// <summary>
         /// Retrieves all classic workflow and modern flow <em>definitions</em>.
         /// Uses paging so environments with many processes are fully returned.
+        /// The definitions themselves (xaml / clientdata) are left out — they are
+        /// the largest columns by far and most processes are never opened — and
+        /// are fetched on demand by <see cref="LoadDefinitions"/>.
         /// </summary>
         public static List<ProcessItem> RetrieveProcesses(IOrganizationService service)
         {
@@ -27,7 +35,7 @@ namespace DataverseProcessMapper.Data
             {
                 ColumnSet = new ColumnSet(
                     "workflowid", "name", "category", "type",
-                    "xaml", "clientdata", "primaryentity", "statecode", "modifiedon",
+                    "primaryentity", "statecode", "modifiedon",
                     "createdon", "createdby", "modifiedby", "ownerid", "scope"),
                 Criteria = new FilterExpression(LogicalOperator.And),
                 PageInfo = new PagingInfo { Count = 500, PageNumber = 1 },
@@ -56,6 +64,42 @@ namespace DataverseProcessMapper.Data
             return results;
         }
 
+        /// <summary>
+        /// Fills in the definitions of the given processes that don't have them
+        /// yet, a batch of rows per request. <paramref name="progress"/> receives
+        /// (done, total) after each batch.
+        /// </summary>
+        public static void LoadDefinitions(IOrganizationService service, IEnumerable<ProcessItem> items,
+            Action<int, int> progress = null)
+        {
+            var pending = items.Where(i => !i.DefinitionLoaded).ToList();
+            for (int start = 0; start < pending.Count; start += DefinitionBatchSize)
+            {
+                var batch = pending.Skip(start).Take(DefinitionBatchSize).ToList();
+                var byId = batch.ToDictionary(i => i.Id);
+
+                var query = new QueryExpression("workflow")
+                {
+                    ColumnSet = new ColumnSet("workflowid", "xaml", "clientdata")
+                };
+                query.Criteria.AddCondition("workflowid", ConditionOperator.In,
+                    batch.Select(i => (object)i.Id).ToArray());
+
+                foreach (var e in service.RetrieveMultiple(query).Entities)
+                {
+                    ProcessItem item;
+                    if (!byId.TryGetValue(e.Id, out item)) continue;
+                    item.Xaml = e.GetAttributeValue<string>("xaml");
+                    item.ClientData = e.GetAttributeValue<string>("clientdata");
+                }
+
+                // A row that came back without a definition (or not at all) has
+                // none to load; asking again would not change that.
+                foreach (var item in batch) item.DefinitionLoaded = true;
+                progress?.Invoke(Math.Min(start + batch.Count, pending.Count), pending.Count);
+            }
+        }
+
         private static ProcessItem Map(Entity e)
         {
             return new ProcessItem
@@ -63,8 +107,6 @@ namespace DataverseProcessMapper.Data
                 Id = e.Id,
                 Name = e.GetAttributeValue<string>("name"),
                 Category = GetOptionSet(e, "category"),
-                Xaml = e.GetAttributeValue<string>("xaml"),
-                ClientData = e.GetAttributeValue<string>("clientdata"),
                 PrimaryEntity = e.GetAttributeValue<string>("primaryentity"),
                 State = GetOptionSet(e, "statecode"),
                 ModifiedOn = e.Contains("modifiedon")
