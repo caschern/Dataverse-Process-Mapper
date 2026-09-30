@@ -66,8 +66,12 @@ namespace DataverseProcessMapper
         public ProcessMapperControl()
         {
             BuildUi();
-            ConnectionUpdated += (s, e) => ClearLoadedProcesses();
+            ConnectionUpdated += (s, e) => OnConnectionChanged();
+            OnWorkAsync += (s, e) => _backgroundJobsStarted++;
         }
+
+        /// <summary>Counts XrmToolBox background jobs (WorkAsync calls) started by this tool.</summary>
+        private int _backgroundJobsStarted;
 
         // ---------------------------------------------------------------- UI
 
@@ -384,27 +388,51 @@ namespace DataverseProcessMapper
 
         // ----------------------------------------------------------- loading
 
+        // Every load belongs to the connection it was started on. XrmToolBox
+        // connects in the background without blocking the tool, so a Load can be
+        // clicked while a switch is still in progress, and a load can still be
+        // running when the switch completes. Bumped on every connection change;
+        // a result from an earlier connection is discarded.
+        private int _connectionVersion;
+        private int _loadingVersion = -1; // the connection a running load is for; -1 = none running
+        private bool _listsLoaded;
+
         private void LoadProcesses()
         {
-            WorkAsync(new WorkAsyncInfo
+            if (_loadingVersion == _connectionVersion) return; // already loading from this connection
+
+            var service = Service; // read here, not on the worker: the connection this load is for
+            int version = _loadingVersion = _connectionVersion;
+            try
             {
-                Message = "Loading workflows and flows from Dataverse...",
-                Work = (worker, args) =>
+                WorkAsync(new WorkAsyncInfo
                 {
-                    args.Result = WorkflowRepository.RetrieveProcesses(Service);
-                },
-                PostWorkCallBack = args =>
-                {
-                    if (args.Error != null)
+                    Message = "Loading workflows and flows from Dataverse...",
+                    Work = (worker, args) =>
                     {
-                        MessageBox.Show(this, args.Error.Message, "Load failed",
-                            MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        return;
+                        args.Result = WorkflowRepository.RetrieveProcesses(service);
+                    },
+                    PostWorkCallBack = args =>
+                    {
+                        if (_loadingVersion == version) _loadingVersion = -1;
+                        if (version != _connectionVersion) return; // the previous environment's processes
+
+                        if (args.Error != null)
+                        {
+                            MessageBox.Show(this, args.Error.Message, "Load failed",
+                                MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            return;
+                        }
+                        var items = (List<ProcessItem>)args.Result;
+                        PopulateLists(items);
                     }
-                    var items = (List<ProcessItem>)args.Result;
-                    PopulateLists(items);
-                }
-            });
+                });
+            }
+            catch
+            {
+                _loadingVersion = -1; // never leave Load stuck as "already running"
+                throw;
+            }
         }
 
         private void PopulateLists(List<ProcessItem> items)
@@ -416,6 +444,7 @@ namespace DataverseProcessMapper
 
             Fill(_flowList, Filter(_allFlows, _flowSearch.Text), flowColumns: true);
             Fill(_workflowList, Filter(_allWorkflows, _workflowSearch.Text), flowColumns: false);
+            _listsLoaded = true;
 
             _status.ForeColor = Color.DimGray;
             UpdateStatus();
@@ -440,7 +469,9 @@ namespace DataverseProcessMapper
 
         private void UpdateStatus()
         {
-            if (_allFlows.Count == 0 && _allWorkflows.Count == 0) return; // nothing loaded yet
+            // A load that found nothing still says so ("0 flows · 0 workflows"),
+            // rather than looking like a load that never happened.
+            if (!_listsLoaded) return;
 
             string flows = _flowList.Items.Count == _allFlows.Count
                 ? $"{_allFlows.Count} flows"
@@ -454,7 +485,19 @@ namespace DataverseProcessMapper
         private static void Fill(ListView list, List<ProcessItem> items, bool flowColumns)
         {
             list.BeginUpdate();
-            list.Items.Clear();
+            try
+            {
+                list.Items.Clear();
+                AddItems(list, items, flowColumns);
+            }
+            finally
+            {
+                list.EndUpdate(); // a throw must not leave the list frozen, never repainting
+            }
+        }
+
+        private static void AddItems(ListView list, List<ProcessItem> items, bool flowColumns)
+        {
             foreach (var item in items)
             {
                 var lvi = new ListViewItem(item.Name ?? "(unnamed)") { Tag = item };
@@ -473,7 +516,6 @@ namespace DataverseProcessMapper
                 }
                 list.Items.Add(lvi);
             }
-            list.EndUpdate();
         }
 
         // -------------------------------------------------------- previewing
@@ -492,13 +534,14 @@ namespace DataverseProcessMapper
             // so neither runs on the UI thread.
             int request = ++_previewRequest;
             var mode = _layoutMode;
+            var service = Service; // the environment the listed item came from
             WorkAsync(new WorkAsyncInfo
             {
                 Message = item.DefinitionLoaded ? "Building the map..." : "Loading the definition...",
                 Work = (worker, args) =>
                 {
                     if (!item.DefinitionLoaded)
-                        WorkflowRepository.LoadDefinitions(Service, new[] { item });
+                        WorkflowRepository.LoadDefinitions(service, new[] { item });
                     var map = ProcessMapBuilder.Build(item, mode);
                     ProcessMapBuilder.CollapseToFit(map); // large maps open readable
                     args.Result = map;
@@ -522,16 +565,44 @@ namespace DataverseProcessMapper
         }
 
         /// <summary>
-        /// A new connection makes the loaded lists stale — they belong to the
-        /// previous environment, and their definitions are fetched lazily, so
-        /// they would be looked up in the wrong one. Any load waiting on the
-        /// connection runs asynchronously and fills the lists afterwards.
+        /// Raised by XrmToolBox (on the UI thread) whenever this tool's connection
+        /// changes, before it runs any action that was waiting for a connection.
+        /// A throw here would skip that action, so nothing here may throw.
+        ///
+        /// Lists that were loaded — or were loading — come from the previous
+        /// environment: they are cleared and reloaded from the new one, which also
+        /// rescues a Load clicked while XrmToolBox was still connecting (that load
+        /// ran against the old environment). A tool with nothing loaded yet stays
+        /// empty; if a Load triggered this connection, XrmToolBox starts it next.
         /// </summary>
-        private void ClearLoadedProcesses()
+        private void OnConnectionChanged()
         {
+            bool hadProcesses = _listsLoaded || _loadingVersion != -1;
+            ClearLoadedProcesses(clearFilters: hadProcesses);
+            if (hadProcesses && Service != null) LoadProcesses();
+        }
+
+        /// <summary>
+        /// Forgets everything loaded from the previous connection: the lists, the
+        /// maps, any load or preview still running for it, and — when there was
+        /// something to filter — the filter text, since names typed for the
+        /// previous environment would hide the new one's processes. Full screen is
+        /// left, so the list the next load fills is actually visible.
+        /// </summary>
+        private void ClearLoadedProcesses(bool clearFilters)
+        {
+            _connectionVersion++;
             _previewRequest++;
+            _listsLoaded = false;
             _allFlows = new List<ProcessItem>();
             _allWorkflows = new List<ProcessItem>();
+            if (clearFilters)
+            {
+                _flowSearch.Clear();
+                _workflowSearch.Clear();
+            }
+            if (_flowPanel.IsFullScreen) _flowPanel.ToggleFullScreen();
+            if (_workflowPanel.IsFullScreen) _workflowPanel.ToggleFullScreen();
             Fill(_flowList, _allFlows, flowColumns: true);
             Fill(_workflowList, _allWorkflows, flowColumns: false);
             _flowPanel.SetMap(null);
@@ -637,6 +708,10 @@ namespace DataverseProcessMapper
                 .Select(l => l.Tag as ProcessItem)
                 .Where(p => p != null)
                 .ToList();
+            // The environment these listed processes came from — read now, before
+            // the dialogs below: a connection switch can complete while they are open.
+            var service = Service;
+            int connection = _connectionVersion;
             if (items.Count == 0)
             {
                 MessageBox.Show(this, "There are no processes in the current list to export.",
@@ -668,9 +743,23 @@ namespace DataverseProcessMapper
                 folder = dlg.SelectedPath;
             }
 
+            if (connection != _connectionVersion)
+            {
+                MessageBox.Show(this,
+                    "The connection changed while the export was being set up, and the list has been " +
+                    "reloaded from the new environment. Run the export again to export that list.",
+                    "Connection changed", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             var setLabel = _tabs.SelectedIndex == 0 ? "Power Automate Flows" : "Classic Workflows";
             var mode = _layoutMode; // the diagrams match what is on screen
 
+            // XrmToolBox shows progress on whichever background job started last,
+            // so progress is only reported while this export is that job; a list
+            // reload or preview started meanwhile would otherwise have its panel
+            // re-created after it finished, and left on screen for good.
+            int thisJob = -1;
             WorkAsync(new WorkAsyncInfo
             {
                 Message = $"Exporting {items.Count} processes to {kind}...",
@@ -679,14 +768,17 @@ namespace DataverseProcessMapper
                     Action<string> report = s => worker.ReportProgress(0, s);
 
                     // The list was loaded without definitions; fetch the missing ones.
-                    WorkflowRepository.LoadDefinitions(Service, items,
+                    WorkflowRepository.LoadDefinitions(service, items,
                         (done, total) => report($"Loading definitions ({done} of {total})..."));
 
                     args.Result = bulkMarkdown
                         ? BulkMarkdownExporter.Export(items, folder, setLabel, report)
                         : BulkHtmlExporter.Export(items, folder, setLabel, report, mode);
                 },
-                ProgressChanged = args => SetWorkingMessage(args.UserState?.ToString()),
+                ProgressChanged = args =>
+                {
+                    if (_backgroundJobsStarted == thisJob) SetWorkingMessage(args.UserState?.ToString());
+                },
                 PostWorkCallBack = args =>
                 {
                     if (args.Error != null)
@@ -709,6 +801,7 @@ namespace DataverseProcessMapper
                     }
                 }
             });
+            thisJob = _backgroundJobsStarted; // progress arrives only after this handler returns
         }
 
         // ------------------------------------------------------------ helpers
