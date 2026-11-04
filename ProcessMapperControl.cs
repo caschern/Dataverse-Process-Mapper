@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.Linq;
 using System.Windows.Forms;
 using DataverseProcessMapper.Data;
@@ -205,7 +206,7 @@ namespace DataverseProcessMapper
             _flowPanel = new DiagramPanel { Dock = DockStyle.Fill };
             _flowDetails = new NodeDetailsPane();
             _flowSplit = CreateSplit(WrapWithSearch(_flowSearch, _flowList),
-                WrapWithDetails(_flowPanel, _flowDetails));
+                WrapWithDetails(_flowPanel, _flowDetails), _flowDetails);
             flowTab.Controls.Add(_flowSplit);
 
             var wfTab = new TabPage("Classic Workflows");
@@ -214,7 +215,7 @@ namespace DataverseProcessMapper
             _workflowPanel = new DiagramPanel { Dock = DockStyle.Fill };
             _workflowDetails = new NodeDetailsPane();
             _workflowSplit = CreateSplit(WrapWithSearch(_workflowSearch, _workflowList),
-                WrapWithDetails(_workflowPanel, _workflowDetails));
+                WrapWithDetails(_workflowPanel, _workflowDetails), _workflowDetails);
             wfTab.Controls.Add(_workflowSplit);
 
             _flowPanel.NodeSelected += n => _flowDetails.SetNode(n);
@@ -237,6 +238,21 @@ namespace DataverseProcessMapper
 
             Controls.Add(_tabs);
             Controls.Add(toolbar);
+        }
+
+        /// <summary>
+        /// Esc leaves full screen wherever focus is in the tool: the overlay
+        /// buttons take focus when clicked, so the map cannot rely on having it.
+        /// </summary>
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            var panel = CurrentPanel();
+            if (keyData == Keys.Escape && panel != null && panel.IsFullScreen)
+            {
+                panel.ToggleFullScreen();
+                return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
         private static TextBox CreateSearchBox()
@@ -373,17 +389,81 @@ namespace DataverseProcessMapper
             return list;
         }
 
-        private static SplitContainer CreateSplit(Control left, Control right)
+        private SplitContainer CreateSplit(Control left, Control right, NodeDetailsPane details)
         {
             var split = new SplitContainer
             {
-                Dock = DockStyle.Fill,
+                // A new SplitContainer is only 150 px wide, which clamps the
+                // distance; size it first. With Panel1 fixed, the list keeps its
+                // width however the host sizes the tool and the map gets the rest.
+                Size = new Size(1000, 600),
+                FixedPanel = FixedPanel.Panel1,
                 Orientation = Orientation.Vertical,
-                SplitterDistance = 320
+                SplitterDistance = 320,
+                Dock = DockStyle.Fill
             };
             split.Panel1.Controls.Add(left);
             split.Panel2.Controls.Add(right);
+
+            // A fixed list would leave the splitter off screen when the window
+            // narrows (map and its buttons gone, nothing left to drag). Remember
+            // the width the list wants and lend part of it to the map only while
+            // the window is too narrow, so it comes back when the window widens.
+            int listWidth = split.SplitterDistance;
+            int fittedWidth = -1;
+            bool fitting = false;
+            split.SplitterMoved += (s, e) => { if (!fitting) listWidth = split.SplitterDistance; };
+            Action fit = () =>
+            {
+                // The map side needs the details pane as it is now (it widens to
+                // its content, scales with DPI and can be dragged wider), the
+                // pane's splitter, and a strip of map for the overlay buttons.
+                var detailsSplitter = details.Parent?.Controls.OfType<Splitter>().FirstOrDefault();
+                int reserve = details.Width + (detailsSplitter?.Width ?? 0)
+                              + (int)Math.Round(MinMapStrip * _mapStripScale);
+                int room = split.Width - split.SplitterWidth - reserve;
+                int target = Math.Max(split.Panel1MinSize, Math.Min(listWidth, room));
+                // No room for a splitter at all (minimised, or mid-construction).
+                if (target > split.Width - split.SplitterWidth - split.Panel2MinSize) return;
+                if (target == split.SplitterDistance) return;
+                fitting = true;
+                try { split.SplitterDistance = target; }
+                finally { fitting = false; }
+            };
+            // Only a width change alters what fits; a height-only resize must
+            // not snap back a list the user dragged very wide.
+            int detailsWidth = details.Width;
+            split.Resize += (s, e) =>
+            {
+                if (split.Width == fittedWidth) return;
+                fittedWidth = split.Width;
+                fit();
+            };
+            details.SizeChanged += (s, e) =>
+            {
+                if (details.Width == detailsWidth) return;
+                detailsWidth = details.Width;
+                fit();
+            };
+            _splitFits.Add(fit);
             return split;
+        }
+
+        // The narrowest map kept beside the details pane (at 100%), so the
+        // Full screen button stays reachable however narrow the window gets.
+        private const int MinMapStrip = 140;
+        private float _mapStripScale = 1f;
+        private readonly List<Action> _splitFits = new List<Action>();
+
+        /// <summary>
+        /// DPI/font scaling widens the details pane before this control learns
+        /// the factor (children scale first), so refit once the strip scales too.
+        /// </summary>
+        protected override void ScaleControl(SizeF factor, BoundsSpecified specified)
+        {
+            base.ScaleControl(factor, specified);
+            if ((specified & BoundsSpecified.Width) != 0 && factor.Width > 0) _mapStripScale *= factor.Width;
+            foreach (var fit in _splitFits) fit();
         }
 
         // ----------------------------------------------------------- loading
@@ -414,6 +494,7 @@ namespace DataverseProcessMapper
                     },
                     PostWorkCallBack = args =>
                     {
+                        if (IsClosed) return;
                         if (_loadingVersion == version) _loadingVersion = -1;
                         if (version != _connectionVersion) return; // the previous environment's processes
 
@@ -504,7 +585,7 @@ namespace DataverseProcessMapper
                 lvi.SubItems.Add(item.StateLabel);
                 if (flowColumns)
                 {
-                    lvi.SubItems.Add(item.CreatedOn?.ToLocalTime().ToString("yyyy-MM-dd") ?? "");
+                    lvi.SubItems.Add(item.CreatedOn?.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "");
                     lvi.SubItems.Add(item.CreatedBy ?? "");
                     lvi.SubItems.Add(item.ModifiedBy ?? "");
                     lvi.SubItems.Add(item.Owner ?? "");
@@ -521,9 +602,11 @@ namespace DataverseProcessMapper
         // -------------------------------------------------------- previewing
 
         // Bumped per preview request; a result that arrives after a newer request
-        // started is stale and dropped, so quick arrow-key browsing can never
-        // land an older map on top of the one now selected.
+        // for the same panel started is stale and dropped, so quick arrow-key
+        // browsing can never land an older map on top of the one now selected.
+        // Kept per panel: a preview on the other tab must not drop this one.
         private int _previewRequest;
+        private readonly Dictionary<DiagramPanel, int> _latestPreview = new Dictionary<DiagramPanel, int>();
 
         private void PreviewSelection(ListView list, DiagramPanel panel)
         {
@@ -532,7 +615,7 @@ namespace DataverseProcessMapper
 
             // Fetching the definition and laying out a large map both take time,
             // so neither runs on the UI thread.
-            int request = ++_previewRequest;
+            int request = _latestPreview[panel] = ++_previewRequest;
             var mode = _layoutMode;
             var service = Service; // the environment the listed item came from
             WorkAsync(new WorkAsyncInfo
@@ -548,15 +631,22 @@ namespace DataverseProcessMapper
                 },
                 PostWorkCallBack = args =>
                 {
-                    if (request != _previewRequest) return;
+                    if (IsClosed) return;
+                    int latest;
+                    if (!_latestPreview.TryGetValue(panel, out latest) || request != latest) return;
                     if (args.Error != null)
                     {
+                        // The previous process must not stay on screen, or be
+                        // exported, under the one now selected.
+                        panel.SetMap(null);
                         MessageBox.Show(this, "Could not render this process:\n\n" + args.Error.Message,
                             "Render error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                     else
                     {
                         panel.SetMap((ProcessMap)args.Result);
+                        // Nested layout may have been toggled while this map was built.
+                        panel.SetLayoutMode(_layoutMode);
                         panel.ZoomToFit();
                     }
                     UpdateButtons();
@@ -592,7 +682,7 @@ namespace DataverseProcessMapper
         private void ClearLoadedProcesses(bool clearFilters)
         {
             _connectionVersion++;
-            _previewRequest++;
+            _latestPreview.Clear(); // drops every preview still running
             _listsLoaded = false;
             _allFlows = new List<ProcessItem>();
             _allWorkflows = new List<ProcessItem>();
@@ -668,8 +758,14 @@ namespace DataverseProcessMapper
                             SvgExporter.Save(map, dialog.FileName);
                             break;
                         case ExportFormat.Png:
-                            using (var bmp = ProcessMapBuilder.RenderToBitmap(ProcessMapBuilder.Expanded(map), 2f))
-                                bmp.Save(dialog.FileName, System.Drawing.Imaging.ImageFormat.Png);
+                            if (!ProcessMapBuilder.SavePng(ProcessMapBuilder.Expanded(map), dialog.FileName))
+                            {
+                                MessageBox.Show(this,
+                                    "This map is too large for a PNG image. Export it as SVG or PDF instead; " +
+                                    "both keep every step sharp at any size.",
+                                    "Map too large", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                                return;
+                            }
                             break;
                         case ExportFormat.Markdown:
                             MarkdownExporter.Save(map, dialog.FileName);
@@ -777,10 +873,12 @@ namespace DataverseProcessMapper
                 },
                 ProgressChanged = args =>
                 {
+                    if (IsClosed) return;
                     if (_backgroundJobsStarted == thisJob) SetWorkingMessage(args.UserState?.ToString());
                 },
                 PostWorkCallBack = args =>
                 {
+                    if (IsClosed) return;
                     if (args.Error != null)
                     {
                         MessageBox.Show(this, "Export failed:\n\n" + args.Error.Message, "Error",
@@ -805,6 +903,13 @@ namespace DataverseProcessMapper
         }
 
         // ------------------------------------------------------------ helpers
+
+        /// <summary>
+        /// True once the tool has been closed. XrmToolBox still delivers a
+        /// background job's result after that, and a disposed control cannot
+        /// own a message box.
+        /// </summary>
+        private bool IsClosed => IsDisposed || Disposing;
 
         private DiagramPanel CurrentPanel()
             => _tabs.SelectedIndex == 0 ? _flowPanel : _workflowPanel;

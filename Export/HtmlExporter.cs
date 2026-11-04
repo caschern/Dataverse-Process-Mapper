@@ -69,7 +69,7 @@ namespace DataverseProcessMapper.Exporters
             Meta(sb, "Primary table", string.IsNullOrEmpty(item?.PrimaryEntity) ? "—" : item.PrimaryEntity);
             Meta(sb, "Status", item?.StateLabel);
             Meta(sb, "Steps", map.Graph.StepCount.ToString());
-            Meta(sb, "Generated", DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+            Meta(sb, "Generated", DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
             sb.AppendLine("</tbody></table>");
 
             // The diagram is an interactive pan/zoom viewport: wheel zooms at the

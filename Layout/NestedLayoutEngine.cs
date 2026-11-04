@@ -30,6 +30,7 @@ namespace DataverseProcessMapper.Layout
         private const float BusGap = 16f;     // content bottom to exit bus
         private const float RailGap = 16f;    // content right edge to the first exit rail
         private const float RailStep = 10f;   // between exit rails
+        private const float DropGap = 8f;     // frame bottom to a connector turning across below it
 
         private sealed class Block
         {
@@ -216,7 +217,8 @@ namespace DataverseProcessMapper.Layout
             // Parallel regions are found per block; the ordering pass then keeps
             // each region's branches together, and here they are always compact.
             sub.ParallelBlocks = ParallelBlockDetector.Detect(sub);
-            LayeredLayoutEngine.Layout(sub, topAlignRows: true, centeredNodeId: block.ContainerId);
+            LayeredLayoutEngine.Layout(sub, topAlignRows: true, centeredNodeId: block.ContainerId,
+                loopPath: (e, x) => LoopFromBottom(sub, e, x, block, tree, blocks));
             block.Sub = sub;
 
             float left = sub.Nodes.Min(n => n.Bounds.Left);
@@ -227,8 +229,14 @@ namespace DataverseProcessMapper.Layout
             foreach (var e in sub.Edges)
                 if (e.RailX.HasValue) right = Math.Max(right, e.RailX.Value + 4f);
 
+            // Loops are drawn as their rails were judged: from the bottom when
+            // the side is no way out.
             foreach (var seg in block.Segments.Where(s => s.LayoutEdge != null))
-                seg.Path = DiagramRenderer.EdgePath(sub, seg.LayoutEdge)?.ToList();
+            {
+                var e = seg.LayoutEdge;
+                var loop = e.IsBack && e.RailX.HasValue ? LoopFromBottom(sub, e, e.RailX.Value, block, tree, blocks) : null;
+                seg.Path = (loop ?? DiagramRenderer.EdgePath(sub, e))?.ToList();
+            }
 
             if (block.HasExitBus)
             {
@@ -249,6 +257,20 @@ namespace DataverseProcessMapper.Layout
                     if (!blocked)
                     {
                         seg.Path = new List<PointF> { new PointF(sx, s.Bounds.Bottom), new PointF(sx, busY) };
+                    }
+                    else if (ContinuesBus(seg, block, tree, blocks) ||
+                             (seg.From != block.ContainerId && SideIsBlocked(sub, s, right + RailGap + rails * RailStep)))
+                    {
+                        // Out of the frame's own bus at its bottom centre — or out
+                        // of a step with a neighbour in the way of its side — then
+                        // round the right-hand side like any blocked exit.
+                        float railX = right + RailGap + rails++ * RailStep;
+                        railRight = Math.Max(railRight, railX);
+                        float dropY = BelowFrame(sub, s, sx, railX);
+                        seg.Path = new List<PointF>
+                        {
+                            new PointF(sx, s.Bounds.Bottom), new PointF(sx, dropY), new PointF(railX, dropY), new PointF(railX, busY)
+                        };
                     }
                     else
                     {
@@ -292,6 +314,65 @@ namespace DataverseProcessMapper.Layout
         {
             var copy = sub.AddNode(node.Label, node.Kind, node.Shape, id: node.Id, subtitle: node.Subtitle);
             copy.Bounds = new RectangleF(0, 0, size.Width, size.Height);
+        }
+
+        /// <summary>True when the segment leaves a member frame whose exit bus is drawn.</summary>
+        private static bool ContinuesBus(Segment seg, Block block, Hierarchy tree, Dictionary<string, Block> blocks)
+            => ContinuesBus(seg.From, block, tree, blocks);
+
+        private static bool ContinuesBus(string from, Block block, Hierarchy tree, Dictionary<string, Block> blocks)
+            => from != block.ContainerId && tree.IsContainer(from) && blocks[from].HasExitBus;
+
+        /// <summary>
+        /// A loop back on a rail at <paramref name="railX"/> that cannot leave
+        /// from its source's side: a member frame with an exit bus (left from its
+        /// bottom centre, where that bus ends), or a step with a neighbour in the
+        /// way. It drops clear of what is beside it, then crosses to its rail.
+        /// Null when the side is clear, so it is drawn as usual.
+        /// </summary>
+        private static PointF[] LoopFromBottom(ProcessGraph sub, ProcessEdge e, float railX, Block block, Hierarchy tree, Dictionary<string, Block> blocks)
+        {
+            var s = sub[e.FromId];
+            var t = sub[e.ToId];
+            if (s == null || t == null || e.FromId == block.ContainerId) return null;
+            if (!ContinuesBus(e.FromId, block, tree, blocks) && !SideIsBlocked(sub, s, railX)) return null;
+            float sx = s.Bounds.X + s.Bounds.Width / 2f;
+            float dropY = BelowFrame(sub, s, sx, railX);
+            float ty = t.Bounds.Y + t.Bounds.Height / 2f;
+            return new[]
+            {
+                new PointF(sx, s.Bounds.Bottom), new PointF(sx, dropY), new PointF(railX, dropY), new PointF(railX, ty), new PointF(t.Bounds.Right, ty)
+            };
+        }
+
+        /// <summary>True when a run from the right-middle of <paramref name="s"/> out to <paramref name="x"/> would pass through another box.</summary>
+        private static bool SideIsBlocked(ProcessGraph sub, ProcessNode s, float x)
+        {
+            float y = s.Bounds.Y + s.Bounds.Height / 2f;
+            return sub.Nodes.Any(n => n != s && n.Bounds.Left < x && n.Bounds.Right > s.Bounds.Right && n.Bounds.Top < y && n.Bounds.Bottom > y);
+        }
+
+        /// <summary>
+        /// The height just below <paramref name="s"/> at which a connector can
+        /// run across from <paramref name="x0"/> to <paramref name="x1"/> without
+        /// cutting through a taller step beside it: DropGap below the tallest of
+        /// them, which still leaves it above the first of the gap's lanes.
+        /// </summary>
+        private static float BelowFrame(ProcessGraph sub, ProcessNode s, float x0, float x1)
+        {
+            float lo = Math.Min(x0, x1), hi = Math.Max(x0, x1);
+            float y = s.Bounds.Bottom + DropGap;
+            for (bool moved = true; moved;)
+            {
+                moved = false;
+                foreach (var n in sub.Nodes)
+                    if (n != s && n.Bounds.Left < hi && n.Bounds.Right > lo && n.Bounds.Top < y && n.Bounds.Bottom + DropGap > y)
+                    {
+                        y = n.Bounds.Bottom + DropGap;
+                        moved = true;
+                    }
+            }
+            return y;
         }
 
         // ---------- placing blocks on the canvas ----------
@@ -343,7 +424,15 @@ namespace DataverseProcessMapper.Layout
                     var header = view[last.To].Bounds;
                     float hx = header.X + header.Width / 2f;
                     var end = pts[pts.Count - 1];
-                    if (Math.Abs(end.X - hx) < 0.5f)
+                    if (last.LayoutEdge != null && last.LayoutEdge.IsBack)
+                    {
+                        // A loop back comes off its rail into the frame's side:
+                        // turn in level with the header and end at its side.
+                        float hy = header.Y + header.Height / 2f;
+                        pts[pts.Count - 2] = new PointF(pts[pts.Count - 2].X, hy);
+                        pts[pts.Count - 1] = new PointF(header.Right, hy);
+                    }
+                    else if (Math.Abs(end.X - hx) < 0.5f)
                     {
                         pts[pts.Count - 1] = new PointF(hx, header.Y);
                     }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -33,7 +34,9 @@ namespace DataverseProcessMapper.Exporters
             Action<string> progress, LayoutMode mode = ProcessMapBuilder.DefaultMode)
         {
             var result = new BulkExportResult();
-            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // "index" is taken by the catalogue, written last: a process called
+            // Index would otherwise be overwritten by it.
+            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "index" };
             var entries = new List<IndexEntry>();
 
             int i = 0;
@@ -44,8 +47,7 @@ namespace DataverseProcessMapper.Exporters
                 try
                 {
                     var map = ProcessMapBuilder.Build(item, mode);
-                    var file = ExportNaming.UniqueName(usedNames,
-                        ExportNaming.SafeFileName(item.Name)) + ".html";
+                    var file = ExportNaming.UniqueName(usedNames, ExportNaming.SafeFileName(item.Name)) + ".html";
                     HtmlExporter.Save(map, Path.Combine(folder, file));
                     entries.Add(new IndexEntry { Item = item, File = file, Steps = map.Graph.StepCount });
                     result.Exported++;
@@ -89,7 +91,7 @@ li { color:#993c1d; }
             sb.AppendLine("</style></head><body>");
             sb.AppendLine("<div class=\"wrap\">");
             sb.AppendLine($"<h1>{E(setLabel)}</h1>");
-            sb.AppendLine($"<p class=\"sub\">{entries.Count} processes · generated {DateTime.Now:yyyy-MM-dd HH:mm}</p>");
+            sb.AppendLine($"<p class=\"sub\">{entries.Count} processes · generated {DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)}</p>");
 
             sb.AppendLine("<table><thead><tr><th>Process</th><th>Status</th><th>Table</th><th>Steps</th></tr></thead><tbody>");
             foreach (var e in entries)

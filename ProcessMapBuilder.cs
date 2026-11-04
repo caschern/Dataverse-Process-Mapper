@@ -188,6 +188,11 @@ namespace DataverseProcessMapper
         /// <summary>Renders the map to a GDI+ bitmap at the given scale.</summary>
         public static Bitmap RenderToBitmap(ProcessMap map, float scale = 1f)
         {
+            return RenderOnto(NewBitmap(map, scale), map, scale);
+        }
+
+        private static Bitmap NewBitmap(ProcessMap map, float scale)
+        {
             int w = System.Math.Max(1, (int)System.Math.Ceiling(map.CanvasSize.Width * scale));
             int h = System.Math.Max(1, (int)System.Math.Ceiling(map.CanvasSize.Height * scale));
 
@@ -196,15 +201,84 @@ namespace DataverseProcessMapper
             // text render ~2x larger than the boxes measured for it. The transform
             // alone scales text and geometry together, matching NodeSizer's
             // default-resolution measurements.
-            var bmp = new Bitmap(w, h);
-            using (var g = Graphics.FromImage(bmp))
+            return new Bitmap(w, h);
+        }
+
+        private static Bitmap RenderOnto(Bitmap bmp, ProcessMap map, float scale)
+        {
+            try
             {
-                g.Clear(DiagramStyle.CanvasBackground);
-                g.ScaleTransform(scale, scale);
-                using (var surface = new GdiDiagramSurface(g))
-                    DiagramRenderer.Render(surface, map.ViewGraph, map.CanvasSize);
+                using (var g = Graphics.FromImage(bmp))
+                {
+                    g.Clear(DiagramStyle.CanvasBackground);
+                    g.ScaleTransform(scale, scale);
+                    using (var surface = new GdiDiagramSurface(g))
+                        DiagramRenderer.Render(surface, map.ViewGraph, map.CanvasSize);
+                }
+            }
+            catch
+            {
+                bmp.Dispose(); // a large bitmap is a lot of memory to leave to the finalizer
+                throw;
             }
             return bmp;
+        }
+
+        /// <summary>PNG exports render at this scale when the map is small enough.</summary>
+        public const float PngScale = 2f;
+
+        /// <summary>Below this scale a PNG is too blurry to read; SVG or PDF is the answer.</summary>
+        public const float MinPngScale = 0.5f;
+
+        /// <summary>GDI+'s PNG encoder cannot save a longer side ("A generic error occurred").</summary>
+        public const int MaxPngSide = 65535;
+
+        /// <summary>
+        /// Most pixels a PNG export allocates (4 bytes each). Keeps very large
+        /// maps at the full 2x.
+        /// </summary>
+        public const double PngPixelBudget = 350e6;
+
+        /// <summary>
+        /// The scale a PNG of a canvas this size is rendered at: <see cref="PngScale"/>,
+        /// reduced as needed to keep both sides and the pixel count within what
+        /// GDI+ can allocate and save. 0 when that would fall below
+        /// <see cref="MinPngScale"/>, i.e. the map is too large for a PNG.
+        /// </summary>
+        public static float PngScaleFor(SizeF canvas)
+        {
+            double w = System.Math.Max(1.0, canvas.Width);
+            double h = System.Math.Max(1.0, canvas.Height);
+            // One pixel short of the limit: the bitmap's sides are rounded up.
+            double scale = System.Math.Min(PngScale, System.Math.Min((MaxPngSide - 1) / w, (MaxPngSide - 1) / h));
+            scale = System.Math.Min(scale, System.Math.Sqrt(PngPixelBudget / (w * h)));
+            return scale < MinPngScale ? 0f : (float)scale;
+        }
+
+        /// <summary>
+        /// Saves the map as a PNG at <see cref="PngScaleFor"/>. Returns false,
+        /// writing no file, when the map is too large for a PNG image — too
+        /// large to scale down legibly, or for GDI+ to allocate.
+        /// </summary>
+        public static bool SavePng(ProcessMap map, string path)
+        {
+            float scale = PngScaleFor(map.CanvasSize);
+            if (scale <= 0f) return false;
+
+            Bitmap bmp;
+            try
+            {
+                bmp = NewBitmap(map, scale);
+            }
+            catch (System.Exception ex) when (ex is System.ArgumentException || ex is System.OutOfMemoryException)
+            {
+                // How GDI+ reports a bitmap it has no memory for ("Parameter is not valid").
+                // Only the allocation is caught: a drawing error is not "too large".
+                return false;
+            }
+            using (RenderOnto(bmp, map, scale))
+                bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+            return true;
         }
     }
 }

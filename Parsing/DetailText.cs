@@ -18,7 +18,7 @@ namespace DataverseProcessMapper.Parsing
 
             var pretty = TryFormatXml(s);
             if (pretty != null)
-                return pretty.Length <= MaxXmlLength ? pretty : pretty.Substring(0, MaxXmlLength - 3) + "…";
+                return pretty.Length <= MaxXmlLength ? pretty : Head(pretty, MaxXmlLength - 3) + "…";
 
             return Cap(s.Replace("\r", " ").Replace("\n", " "));
         }
@@ -39,6 +39,30 @@ namespace DataverseProcessMapper.Parsing
         }
 
         private static string Cap(string s)
-            => s.Length <= MaxLength ? s : s.Substring(0, MaxLength - 3) + "…";
+            => s.Length <= MaxLength ? s : Head(s, MaxLength - 3) + "…";
+
+        // Every cut of user text goes through Head/Tail: a plain Substring can
+        // split an emoji's surrogate pair, and the lone half left behind becomes
+        // U+FFFD in SVG/HTML/Markdown and makes Uri.EscapeDataString throw on a
+        // file name.
+
+        /// <summary>At most the first <paramref name="length"/> chars, one fewer rather than half an emoji.</summary>
+        public static string Head(string s, int length)
+        {
+            if (s.Length <= length) return s;
+            if (length <= 0) return "";
+            if (char.IsHighSurrogate(s[length - 1])) length--;
+            return s.Substring(0, length);
+        }
+
+        /// <summary>At most the last <paramref name="length"/> chars, one fewer rather than half an emoji.</summary>
+        public static string Tail(string s, int length)
+        {
+            if (s.Length <= length) return s;
+            if (length <= 0) return ""; // s[s.Length] below would be out of range
+            int start = s.Length - length;
+            if (char.IsLowSurrogate(s[start])) start++;
+            return s.Substring(start);
+        }
     }
 }

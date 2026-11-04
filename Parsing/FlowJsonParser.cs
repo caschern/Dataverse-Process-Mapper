@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using DataverseProcessMapper.Models;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace DataverseProcessMapper.Parsing
@@ -92,8 +94,13 @@ namespace DataverseProcessMapper.Parsing
         private void AddActions(ProcessGraph graph, JObject actions, IList<string> parentRoots, string idPrefix,
             string parentId = null)
         {
-            // First pass: create a node for every action in this scope.
-            var ids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            // First pass: create a node for every action in this scope. Names that
+            // differ only in case ("Cond", "cond") are distinct actions, so each
+            // keeps its own id; runAfter is matched exact-case first, and only then
+            // case-insensitively, where the first such action wins.
+            var created = new List<KeyValuePair<JProperty, string>>();
+            var exactIds = new Dictionary<string, string>(StringComparer.Ordinal);
+            var looseIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var p in actions.Properties())
             {
                 var body = p.Value as JObject;
@@ -108,14 +115,16 @@ namespace DataverseProcessMapper.Parsing
                     subtitle: ShortType(type));
                 node.ParentId = parentId;
                 node.Details = ExtractDetails(body);
-                ids[p.Name] = node.Id;
+                created.Add(new KeyValuePair<JProperty, string>(p, node.Id));
+                exactIds[p.Name] = node.Id;
+                if (!looseIds.ContainsKey(p.Name)) looseIds[p.Name] = node.Id;
             }
 
             // Second pass: edges + recurse into nested scopes.
-            foreach (var p in actions.Properties())
+            foreach (var pair in created)
             {
-                var body = p.Value as JObject;
-                var selfId = ids[p.Name];
+                var body = pair.Key.Value as JObject;
+                var selfId = pair.Value;
                 var runAfter = body?["runAfter"] as JObject;
 
                 if (runAfter == null || runAfter.Count == 0)
@@ -129,7 +138,8 @@ namespace DataverseProcessMapper.Parsing
                     foreach (var dep in runAfter.Properties())
                     {
                         string fromId;
-                        if (!ids.TryGetValue(dep.Name, out fromId)) continue;
+                        if (!exactIds.TryGetValue(dep.Name, out fromId)
+                            && !looseIds.TryGetValue(dep.Name, out fromId)) continue;
                         var statuses = (dep.Value as JArray)?.Select(v => v.ToString()).ToList();
                         var label = StatusLabel(statuses);
                         graph.AddEdge(fromId, selfId, label, dashed: label != null);
@@ -175,10 +185,12 @@ namespace DataverseProcessMapper.Parsing
             }
 
             // Switch: "cases": { key: { "case": <value>, "actions": … } }, "default": { "actions": … }
+            // A Switch may declare only a default (no "cases", or not an object):
+            // it is still a switch, never a single-body container.
             var cases = body["cases"] as JObject;
-            if (cases != null)
+            if (cases != null || type.Equals("Switch", StringComparison.OrdinalIgnoreCase))
             {
-                foreach (var c in cases.Properties())
+                foreach (var c in cases?.Properties() ?? Enumerable.Empty<JProperty>())
                 {
                     var caseObj = c.Value as JObject;
                     var value = CaseValue(caseObj);
@@ -291,7 +303,7 @@ namespace DataverseProcessMapper.Parsing
         private static string ShortValue(string value)
             => value.Length <= 24
                 ? value
-                : value.Substring(0, 8) + "…" + value.Substring(value.Length - 8);
+                : DetailText.Head(value, 8) + "…" + DetailText.Tail(value, 8);
 
         private void LinkBranchPlaceholder(ProcessGraph graph, string controlId, string label, string idPrefix)
         {
@@ -334,7 +346,7 @@ namespace DataverseProcessMapper.Parsing
                 // Indexing a JValue ("inputs": "@variables('x')") throws — only
                 // drill in when inputs is actually an object.
                 var inputs = body["inputs"];
-                var inputsObj = inputs as JObject;
+                var inputsObj = MaskSecrets(inputs as JObject);
 
                 var host = inputsObj?["host"] as JObject;
                 if (host != null)
@@ -447,12 +459,258 @@ namespace DataverseProcessMapper.Parsing
 
         private static string Truncate(string s) => DetailText.Clean(s);
 
+        // ---------- secrets ----------
+        //
+        // Details end up in the details pane and in every HTML/Markdown export,
+        // bulk packs included, which are made to be shared. So a literal
+        // credential in an HTTP action's headers, queries, uri or body, or in a
+        // connector parameter, is masked. An
+        // expression ("Bearer @{body('Get_token')?['access_token']}") is not a
+        // secret: it documents where the secret comes from, so it stays.
+
+        private const string Hidden = "(hidden)";
+
+        private static readonly HashSet<string> SecretHeaderNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie",
+            "Ocp-Apim-Subscription-Key", "x-functions-key"
+        };
+
+        private static readonly string[] SecretNameParts = { "api-key", "apikey", "api_key", "token", "secret", "password" };
+
+        // Query parameters that carry a key: an Azure Function's code, a SAS sig…
+        private static readonly HashSet<string> SecretQueryNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "code", "sig", "key", "api-key", "apikey", "api_key", "access_token", "token",
+            "client_secret", "secret", "password", "subscription-key"
+        };
+
+        private static readonly Regex UriQueryParam = new Regex(@"([?&])([^=&#?]+)=([^&#]*)");
+        private static readonly Regex UriPassword = new Regex(@"^(\s*[A-Za-z][A-Za-z0-9+.\-]*://[^/?#@:\s]*:)([^/?#@\s]*)@");
+
+        /// <summary>
+        /// A copy of an inputs object with literal credentials replaced by
+        /// "(hidden)" — in every headers / queries / authentication object, uri,
+        /// request body and connector parameter it holds, at any depth (an HTTP
+        /// webhook nests them under subscribe / unsubscribe). The parsed
+        /// definition itself is never changed.
+        /// </summary>
+        private static JObject MaskSecrets(JObject inputs)
+        {
+            if (inputs == null) return null;
+            var copy = (JObject)inputs.DeepClone();
+            MaskWithin(copy);
+            return copy;
+        }
+
+        /// <param name="inBody">Inside a request body: a literal under a secret name is masked too.</param>
+        private static void MaskWithin(JToken token, bool inBody = false)
+        {
+            var obj = token as JObject;
+            if (obj == null)
+            {
+                if (token is JArray)
+                    foreach (var item in token.Children().ToList()) MaskWithin(item, inBody);
+                return;
+            }
+
+            foreach (var p in obj.Properties().ToList())
+                MaskProperty(p, p.Name, inBody);
+        }
+
+        /// <summary>Masks one property, judged by <paramref name="name"/> (for a parameter, the last part of its path).</summary>
+        private static void MaskProperty(JProperty p, string name, bool inBody)
+        {
+            var values = p.Value as JObject;
+            var text = p.Value.Type == JTokenType.String ? p.Value.ToString() : null;
+            if (values != null && Is(name, "headers"))
+                MaskValues(values, IsSecretHeader);
+            else if (values != null && Is(name, "queries"))
+                MaskValues(values, IsSecretQuery);
+            else if (Is(name, "authentication"))
+            {
+                // Skipped at the top of inputs; nested (a webhook's subscribe) it is
+                // shown, so all but its type is masked — secret fields vary by type.
+                if (values != null)
+                    MaskValues(values, n => !n.Equals("type", StringComparison.OrdinalIgnoreCase));
+                else if (IsLiteral(p.Value))
+                    p.Value = new JValue(Hidden);
+            }
+            else if (text != null && (Is(name, "uri") || Is(name, "url")))
+                Replace(p, text, MaskUri(text));
+            else if (values != null && !inBody && Is(name, "parameters"))
+                MaskParameters(values);
+            else if (Is(name, "body"))
+            {
+                // A token request posts its credentials: as JSON, or form-encoded.
+                if (text != null) Replace(p, text, MaskForm(text));
+                else MaskWithin(p.Value, true);
+            }
+            else if (text != null && inBody)
+            {
+                if (IsSecretHeader(name) && IsLiteral(text)) p.Value = new JValue(Hidden);
+            }
+            else
+                MaskWithin(p.Value, inBody);
+        }
+
+        /// <summary>
+        /// A connector's parameters are named by path ("parameters/headers",
+        /// "request/url", "item/code"), so each is judged by its last part. Besides
+        /// the headers / queries / uri / body rules, a parameter named like a secret
+        /// header ("api-key", "Ocp-Apim-Subscription-Key") hides its literal value,
+        /// and so does a header line ("Authorization: Bearer …") in a plain one.
+        /// Bare query names (code, key, sig) don't count here: "item/code" is data.
+        /// </summary>
+        private static void MaskParameters(JObject parameters)
+        {
+            foreach (var p in parameters.Properties().ToList())
+            {
+                var name = p.Name.Substring(p.Name.LastIndexOf('/') + 1);
+                var text = p.Value.Type == JTokenType.String ? p.Value.ToString() : null;
+                if (text == null || Is(name, "uri") || Is(name, "url") || Is(name, "body") || Is(name, "authentication"))
+                    MaskProperty(p, name, false);
+                else if (IsSecretHeader(name))
+                {
+                    if (IsLiteral(text)) p.Value = new JValue(Hidden);
+                }
+                else
+                    Replace(p, text, MaskHeaderLine(text));
+            }
+        }
+
+        private static bool Is(string name, string expected) => name.Equals(expected, StringComparison.OrdinalIgnoreCase);
+
+        // Only a value that changed is replaced, so the rest keep their exact token.
+        private static void Replace(JProperty p, string before, string after)
+        {
+            if (!string.Equals(before, after, StringComparison.Ordinal)) p.Value = new JValue(after);
+        }
+
+        private static void MaskValues(JObject values, Func<string, bool> isSecret)
+        {
+            foreach (var p in values.Properties().ToList())
+                if (isSecret(p.Name) && IsLiteral(p.Value))
+                    p.Value = new JValue(Hidden);
+        }
+
+        private static bool IsSecretHeader(string name)
+            => SecretHeaderNames.Contains(name)
+               || SecretNameParts.Any(part => name.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0);
+
+        // One rule for a queries object and a uri's query string, so a parameter
+        // is masked the same whichever way the action passes it.
+        private static bool IsSecretQuery(string name)
+            => IsSecretHeader(name) || SecretQueryNames.Contains(name);
+
+        private static string MaskUri(string uri)
+        {
+            // "@concat('https://…?code=', …)" is code that builds the uri, not the uri.
+            if (IsExpression(uri)) return uri;
+            uri = UriPassword.Replace(uri, m => m.Groups[2].Length > 0 && IsLiteral(m.Groups[2].Value)
+                ? m.Groups[1].Value + Hidden + "@"
+                : m.Value);
+            return MaskPairs(uri, UriQueryParam);
+        }
+
+        private static readonly Regex FormPair = new Regex(@"(^|&)([^=&]+)=([^&]*)");
+
+        /// <summary>A form-encoded body ("grant_type=…&amp;client_secret=…") with its secret values masked.</summary>
+        private static string MaskForm(string body)
+        {
+            if (IsExpression(body) || body.IndexOf('\n') >= 0 || body.IndexOf('\r') >= 0) return body;
+            // Only name=value pairs joined by '&' are a form; other text is left alone.
+            foreach (var pair in body.Split('&'))
+            {
+                int equals = pair.IndexOf('=');
+                if (equals <= 0 || pair.Substring(0, equals).Any(char.IsWhiteSpace)) return body;
+            }
+            return MaskPairs(body, FormPair);
+        }
+
+        /// <summary>
+        /// Masks each name=value <paramref name="pairs"/> match that the query rule
+        /// calls secret. A match inside an @{…} span is part of the expression, and
+        /// a value reaching into one is not literal, so an expression is never cut.
+        /// </summary>
+        private static string MaskPairs(string text, Regex pairs)
+        {
+            var spans = ExpressionSpans(text);
+            return pairs.Replace(text, m => !spans.Any(s => m.Index >= s[0] && m.Index <= s[1])
+                                            && IsSecretQuery(m.Groups[2].Value) && IsLiteral(m.Groups[3].Value)
+                ? m.Groups[1].Value + m.Groups[2].Value + "=" + Hidden
+                : m.Value);
+        }
+
+        /// <summary>First and last index of each @{…} in <paramref name="text"/>, braces in quoted strings ignored.</summary>
+        private static List<int[]> ExpressionSpans(string text)
+        {
+            var spans = new List<int[]>();
+            int start = text.IndexOf("@{", StringComparison.Ordinal);
+            while (start >= 0)
+            {
+                int depth = 0, end = start + 1;
+                bool quoted = false;
+                for (; end < text.Length; end++)
+                {
+                    var c = text[end];
+                    if (c == '\'') quoted = !quoted;
+                    else if (!quoted && c == '{') depth++;
+                    else if (!quoted && c == '}' && --depth == 0) break;
+                }
+                // An unclosed span runs to the end.
+                spans.Add(new[] { start, Math.Min(end, text.Length - 1) });
+                if (end >= text.Length - 1) break;
+                start = text.IndexOf("@{", end + 1, StringComparison.Ordinal);
+            }
+            return spans;
+        }
+
+        private static readonly Regex HeaderLine = new Regex(@"^(\s*([A-Za-z0-9!#$%&'*+.^_`|~-]+)\s*:\s*)(\S.*)$");
+
+        /// <summary>"Authorization: Bearer …" becomes "Authorization: (hidden)"; any other text stays.</summary>
+        private static string MaskHeaderLine(string text)
+        {
+            if (text.IndexOf('\n') >= 0 || text.IndexOf('\r') >= 0) return text;
+            var m = HeaderLine.Match(text);
+            return m.Success && IsSecretHeader(m.Groups[2].Value) && IsLiteral(m.Groups[3].Value)
+                ? m.Groups[1].Value + Hidden
+                : text;
+        }
+
+        // A whole-value expression ("@parameters('x')"). "@{…}" is a template whose
+        // text outside the braces is literal; "@@" escapes a literal '@'.
+        private static bool IsExpression(string value)
+            => value.StartsWith("@", StringComparison.Ordinal)
+               && !value.StartsWith("@@", StringComparison.Ordinal)
+               && !value.StartsWith("@{", StringComparison.Ordinal);
+
+        /// <summary>True for a written-in value; false for an empty one or an expression reference.</summary>
+        private static bool IsLiteral(JToken value)
+        {
+            if (value == null || value.Type == JTokenType.Null) return false;
+            return value.Type != JTokenType.String || IsLiteral(value.ToString());
+        }
+
+        private static bool IsLiteral(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Contains("@{")) return false;
+            // A leading "@@" escapes the '@': the value is plain text, not an expression.
+            return !value.StartsWith("@", StringComparison.Ordinal) || value.StartsWith("@@", StringComparison.Ordinal);
+        }
+
         // ---------- helpers ----------
 
         private static JObject LocateDefinition(string clientData)
         {
             if (string.IsNullOrWhiteSpace(clientData)) return null;
-            var root = JObject.Parse(clientData);
+
+            // Dates stay the strings the author wrote: by default Newtonsoft turns
+            // ISO text into DateTime, which then prints in local time and the
+            // current culture, offset dropped ("4/30/2024 6:00:00 PM").
+            JObject root;
+            using (var reader = new JsonTextReader(new StringReader(clientData)) { DateParseHandling = DateParseHandling.None })
+                root = JObject.Load(reader);
 
             // Common shape: properties.definition
             var def = root.SelectToken("properties.definition") as JObject;

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -52,7 +53,7 @@ namespace DataverseProcessMapper.Exporters
         private static void AppendHeader(StringBuilder sb, ProcessMap map, ProcessGraph graph)
         {
             var item = map.Source;
-            sb.AppendLine("# " + Clean(graph.Title));
+            sb.AppendLine("# " + HeadingText(Clean(graph.Title)));
             sb.AppendLine();
 
             // Stated as sentences rather than a table: retrieval matches prose
@@ -62,18 +63,21 @@ namespace DataverseProcessMapper.Exporters
             {
                 facts.Add("a " + item.CategoryLabel);
                 if (!string.IsNullOrEmpty(item.PrimaryEntity))
-                    facts.Add("running against the `" + item.PrimaryEntity + "` table");
+                    facts.Add("running against the " + Code(item.PrimaryEntity) + " table");
                 facts.Add("currently " + item.StateLabel.ToLowerInvariant());
             }
             facts.Add("made up of " + graph.StepCount + " steps");
 
             sb.AppendLine("**" + Clean(graph.Title) + "** is " + string.Join(", ", facts) + ".");
             sb.AppendLine();
+            // Invariant: under a Thai or Hijri calendar the year would not be the Gregorian one.
+            var today = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             if (item?.ModifiedOn != null)
-                sb.AppendLine("Last modified " + item.ModifiedOn.Value.ToString("yyyy-MM-dd") + ". " +
-                              "Documented " + DateTime.Now.ToString("yyyy-MM-dd") + ".");
+                sb.AppendLine("Last modified " +
+                              item.ModifiedOn.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ". " +
+                              "Documented " + today + ".");
             else
-                sb.AppendLine("Documented " + DateTime.Now.ToString("yyyy-MM-dd") + ".");
+                sb.AppendLine("Documented " + today + ".");
             sb.AppendLine();
         }
 
@@ -135,7 +139,7 @@ namespace DataverseProcessMapper.Exporters
 
             foreach (var node in graph.Nodes.Where(n => n.ParentId == parentId))
             {
-                sb.AppendLine(new string('#', heading) + " " + Clean(node.Label));
+                sb.AppendLine(new string('#', heading) + " " + HeadingText(Clean(node.Label)));
                 sb.AppendLine();
 
                 // "Scope · Scope" says nothing twice — only add a subtitle that differs.
@@ -203,20 +207,22 @@ namespace DataverseProcessMapper.Exporters
 
             foreach (var kv in simple)
             {
-                var value = kv.Value.StartsWith("@") ? "`" + kv.Value + "`" : Clean(kv.Value);
+                var value = kv.Value.StartsWith("@") ? Code(kv.Value) : Clean(kv.Value);
                 sb.AppendLine("- **" + Clean(kv.Key) + ":** " + value);
             }
             if (simple.Count > 0) sb.AppendLine();
 
             // Multi-line values (pretty-printed fetchXml, JSON schemas) go in a
-            // fenced block rather than a list item, so the fence stays valid.
+            // fenced block rather than a list item, so the fence stays valid —
+            // longer than any backtick run inside, which would otherwise close it.
             foreach (var kv in blocks)
             {
+                var fence = new string('`', Math.Max(3, LongestBacktickRun(kv.Value) + 1));
                 sb.AppendLine("**" + Clean(kv.Key) + ":**");
                 sb.AppendLine();
-                sb.AppendLine("```");
+                sb.AppendLine(fence);
                 sb.AppendLine(kv.Value.TrimEnd());
-                sb.AppendLine("```");
+                sb.AppendLine(fence);
                 sb.AppendLine();
             }
         }
@@ -268,6 +274,44 @@ namespace DataverseProcessMapper.Exporters
             if (string.IsNullOrEmpty(s)) return "";
             s = s.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ').Trim();
             return s.Replace("|", "\\|").Replace("*", "\\*");
+        }
+
+        /// <summary>
+        /// An inline code span that survives backticks in the value. A span closes
+        /// at the first backtick run as long as its opener, so the delimiter is one
+        /// longer than any run inside; a space keeps a leading or trailing backtick
+        /// from merging with it (CommonMark strips that one space again).
+        /// </summary>
+        internal static string Code(string s)
+        {
+            s = s ?? "";
+            var fence = new string('`', LongestBacktickRun(s) + 1);
+            var pad = s.StartsWith("`") || s.EndsWith("`") ? " " : "";
+            return fence + pad + s + pad + fence;
+        }
+
+        private static int LongestBacktickRun(string s)
+        {
+            int longest = 0, run = 0;
+            foreach (var c in s)
+            {
+                run = c == '`' ? run + 1 : 0;
+                longest = Math.Max(longest, run);
+            }
+            return longest;
+        }
+
+        /// <summary>
+        /// Heading text from already-cleaned text: a trailing run of '#' after a
+        /// space or tab (or on its own) is read as the heading's optional closing
+        /// sequence and dropped, so "Ticket #" would render as "Ticket".
+        /// </summary>
+        internal static string HeadingText(string s)
+        {
+            int start = s.Length;
+            while (start > 0 && s[start - 1] == '#') start--;
+            bool closing = start < s.Length && (start == 0 || s[start - 1] == ' ' || s[start - 1] == '\t');
+            return closing ? s.Insert(start, "\\") : s;
         }
     }
 }

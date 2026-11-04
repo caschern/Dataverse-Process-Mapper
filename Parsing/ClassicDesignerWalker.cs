@@ -490,7 +490,7 @@ namespace DataverseProcessMapper.Parsing
         }
 
         private static string Shorten(string label)
-            => label.Length <= MaxLabelLength ? label : label.Substring(0, MaxLabelLength - 1).TrimEnd() + "…";
+            => label.Length <= MaxLabelLength ? label : DetailText.Head(label, MaxLabelLength - 1).TrimEnd() + "…";
 
         private static string Words(string pascal)
             => string.IsNullOrEmpty(pascal) ? pascal : Regex.Replace(pascal, "(?<=[a-z])(?=[A-Z])", " ");

@@ -26,7 +26,14 @@ namespace DataverseProcessMapper.Layout
         /// layout's container header, so the connector into a frame arrives
         /// straight onto it.
         /// </param>
-        public static SizeF Layout(ProcessGraph graph, bool topAlignRows = false, string centeredNodeId = null)
+        /// <param name="loopPath">
+        /// The polyline a loop will be drawn along on a rail at a given x, for a
+        /// caller that redraws some loops; null (or a null result) when drawn as
+        /// <see cref="DiagramRenderer.EdgePath"/> draws it. Rails are chosen on
+        /// the path that is drawn.
+        /// </param>
+        public static SizeF Layout(ProcessGraph graph, bool topAlignRows = false, string centeredNodeId = null,
+            Func<ProcessEdge, float, PointF[]> loopPath = null)
         {
             if (graph.Nodes.Count == 0) return new SizeF(200, 100);
 
@@ -54,7 +61,7 @@ namespace DataverseProcessMapper.Layout
             var byId = allNodes.ToDictionary(n => n.Id);
 
             var ranks = OrderRanks(graph, allNodes, layoutForward);
-            return Position(graph, ranks, layoutForward, byId, chains, topAlignRows, centeredNodeId);
+            return Position(graph, ranks, layoutForward, byId, chains, topAlignRows, centeredNodeId, loopPath);
         }
 
         private const float VirtualWidth = 10f;
@@ -536,7 +543,7 @@ namespace DataverseProcessMapper.Layout
 
         private static SizeF Position(ProcessGraph graph, List<List<ProcessNode>> ranks,
             List<ProcessEdge> layoutForward, Dictionary<string, ProcessNode> byId, List<Chain> chains,
-            bool topAlignRows, string centeredNodeId)
+            bool topAlignRows, string centeredNodeId, Func<ProcessEdge, float, PointF[]> loopPath)
         {
             // Per-rank height = tallest node in that rank.
             var rankHeights = ranks.Select(r => r.Max(n => n.Bounds.Height)).ToList();
@@ -629,7 +636,7 @@ namespace DataverseProcessMapper.Layout
             BuildRoutes(graph, chains);
 
             // --- Back-edge rails: overlapping loops each get their own rail ---
-            float maxRail = AssignBackEdgeRails(graph);
+            float maxRail = AssignBackEdgeRails(graph, loopPath);
             if (maxRail > 0f)
                 canvasWidth = Math.Max(canvasWidth, maxRail + DiagramStyle.Margin);
 
@@ -903,7 +910,7 @@ namespace DataverseProcessMapper.Layout
         }
 
         /// <summary>Assigns each back edge a right-hand rail; vertically overlapping loops get distinct rails.</summary>
-        private static float AssignBackEdgeRails(ProcessGraph graph)
+        private static float AssignBackEdgeRails(ProcessGraph graph, Func<ProcessEdge, float, PointF[]> loopPath)
         {
             var backs = new List<Rail>();
             foreach (var e in graph.Edges)
@@ -917,28 +924,103 @@ namespace DataverseProcessMapper.Layout
                 backs.Add(new Rail
                 {
                     Edge = e,
+                    From = from,
+                    To = to,
                     Top = Math.Min(y1, y2),
                     Bottom = Math.Max(y1, y2),
-                    BaseX = Math.Max(from.Bounds.Right, to.Bounds.Right)
+                    BaseX = Math.Max(from.Bounds.Right, to.Bounds.Right),
+                    Drawn = loopPath
                 });
             }
             if (backs.Count == 0) return 0f;
 
+            // Every connector already drawn, as legs a rail can cross or crowd.
+            var legs = new List<Leg>();
+            foreach (var e in graph.Edges.Where(e => !e.IsBack))
+            {
+                var path = graph[e.FromId] == null || graph[e.ToId] == null ? null : DiagramRenderer.EdgePath(graph, e);
+                if (path != null) legs.AddRange(Legs(e, path));
+            }
+
             float maxRail = 0f;
-            var laneBottom = new List<float>();
+            var assigned = new List<Rail>();
             foreach (var b in backs.OrderBy(b => b.Top))
             {
-                int lane = -1;
-                for (int i = 0; i < laneBottom.Count; i++)
-                {
-                    if (laneBottom[i] + 8f <= b.Top) { lane = i; break; }
-                }
-                if (lane < 0) { lane = laneBottom.Count; laneBottom.Add(b.Bottom); }
-                else laneBottom[lane] = b.Bottom;
+                // The rail goes down the clearest corridor right of the loop's
+                // ends, judged with the legs out to it. Right of everything
+                // level with the loop is always clear itself, but those legs
+                // then cut across every step on the loop's two rows.
+                var corridors = new List<float> { b.BaseX + 24f };
+                foreach (var n in graph.Nodes)
+                    if (n.Bounds.Right > b.BaseX && n.Bounds.Top <= b.Bottom && n.Bounds.Bottom >= b.Top)
+                    {
+                        // Past each thing in the way: just clear of it, or with the
+                        // usual room; or midway to it when there is room before it.
+                        corridors.Add(n.Bounds.Right + 12f);
+                        corridors.Add(n.Bounds.Right + 24f);
+                        if (n.Bounds.Left - b.BaseX >= 20f) corridors.Add((b.BaseX + n.Bounds.Left) / 2f);
+                    }
 
-                float rail = b.BaseX + 24f + lane * 12f;
-                b.Edge.RailX = rail;
-                if (rail > maxRail) maxRail = rail;
+                // Only what is level with the loop can be in its way.
+                var nearNodes = graph.Nodes.Where(n => n != b.From && n != b.To &&
+                    n.Bounds.Top - 4f < b.Bottom && n.Bounds.Bottom + 4f > b.Top).ToList();
+                var inside = nearNodes.Select(n => RectangleF.Inflate(n.Bounds, -2f, -2f)).ToList();
+                var border = nearNodes.Select(n => RectangleF.Inflate(n.Bounds, 4f, 4f)).ToList();
+                var nearLegs = legs.Where(r => r.Top < b.Bottom + 1f && r.Bottom > b.Top - 1f &&
+                    r.Edge.FromId != b.Edge.FromId && r.Edge.ToId != b.Edge.ToId &&
+                    r.Edge.FromId != b.Edge.ToId && r.Edge.ToId != b.Edge.FromId).ToList();
+                var alongside = assigned.Where(d => d.Top < b.Bottom + 8f && b.Top < d.Bottom + 8f)
+                    .Select(d => d.Edge.RailX.Value).OrderBy(x => x).ToList();
+
+                float best = 0f;
+                long bestScore = long.MaxValue;
+                foreach (var c in corridors.Distinct().OrderBy(c => c))
+                {
+                    // The legs out only get longer from here on: once they alone
+                    // run through as much as the best so far, nothing further
+                    // right can beat it. (A loop redrawn from its bottom only
+                    // drops the further, the further right its rail.)
+                    var reach = Legs(b.Edge, b.Path(c));
+                    if (inside.Count(r => reach[0].Enters(r) || reach[reach.Count - 1].Enters(r)) * 1000000L >= bestScore)
+                        break;
+
+                    // Loops level with each other each keep their own rail.
+                    float rail = c;
+                    foreach (var x in alongside)
+                        if (Math.Abs(x - rail) < 11.5f) rail = x + 12f;
+
+                    var mine = Legs(b.Edge, b.Path(rail));
+                    int through = 0, crowded = 0;
+                    for (int i = 0; i < nearNodes.Count; i++)
+                    {
+                        if (Enters(mine, inside[i])) through++;
+                        else if (Enters(mine, border[i])) crowded++; // along its border
+                    }
+
+                    // Through a step is worst, drawn on top of a border or
+                    // another connector next, then a crossing; a tie goes to the
+                    // nearer corridor.
+                    long score = through * 1000000L + crowded * 1000L;
+                    foreach (var r in nearLegs)
+                    {
+                        if (score >= bestScore) break;
+                        foreach (var m in mine)
+                        {
+                            if (m.Crowds(r)) score += 1000L; // on top of another connector
+                            else if (m.Crosses(r)) score++;
+                        }
+                    }
+                    if (score < bestScore)
+                    {
+                        best = rail;
+                        bestScore = score;
+                    }
+                }
+
+                b.Edge.RailX = best;
+                assigned.Add(b);
+                legs.AddRange(Legs(b.Edge, b.Path(best)));
+                if (best > maxRail) maxRail = best;
             }
             return maxRail;
         }
@@ -946,9 +1028,80 @@ namespace DataverseProcessMapper.Layout
         private class Rail
         {
             public ProcessEdge Edge;
+            public ProcessNode From;
+            public ProcessNode To;
             public float Top;
             public float Bottom;
             public float BaseX;
+            public Func<ProcessEdge, float, PointF[]> Drawn; // the caller's redrawn path, if any
+
+            /// <summary>The loop drawn on a rail at <paramref name="x"/>, as it will be drawn.</summary>
+            public PointF[] Path(float x)
+            {
+                var drawn = Drawn?.Invoke(Edge, x);
+                if (drawn != null) return drawn;
+                var start = new PointF(From.Bounds.Right, From.Bounds.Y + From.Bounds.Height / 2f);
+                var end = new PointF(To.Bounds.Right, To.Bounds.Y + To.Bounds.Height / 2f);
+                return new[] { start, new PointF(x, start.Y), new PointF(x, end.Y), end };
+            }
+        }
+
+        private static List<Leg> Legs(ProcessEdge e, PointF[] path)
+        {
+            var legs = new List<Leg>();
+            for (int i = 0; i < path.Length - 1; i++)
+                legs.Add(new Leg(e, path[i], path[i + 1]));
+            return legs;
+        }
+
+        private static bool Enters(List<Leg> legs, RectangleF r)
+        {
+            foreach (var leg in legs)
+                if (leg.Enters(r)) return true;
+            return false;
+        }
+
+        /// <summary>One straight leg of a drawn connector.</summary>
+        private sealed class Leg
+        {
+            public readonly ProcessEdge Edge;
+            public readonly bool Horizontal;
+            public readonly bool Vertical;
+            public readonly float Left;
+            public readonly float Right;
+            public readonly float Top;
+            public readonly float Bottom;
+
+            public Leg(ProcessEdge edge, PointF a, PointF b)
+            {
+                Edge = edge;
+                Horizontal = Math.Abs(a.Y - b.Y) < 0.01f;
+                Vertical = Math.Abs(a.X - b.X) < 0.01f;
+                Left = Math.Min(a.X, b.X);
+                Right = Math.Max(a.X, b.X);
+                Top = Math.Min(a.Y, b.Y);
+                Bottom = Math.Max(a.Y, b.Y);
+            }
+
+            public bool Enters(RectangleF r)
+            {
+                if (Horizontal) return Top > r.Top && Top < r.Bottom && Right > r.Left && Left < r.Right;
+                if (Vertical) return Left > r.Left && Left < r.Right && Bottom > r.Top && Top < r.Bottom;
+                return false;
+            }
+
+            /// <summary>A horizontal and a vertical leg that pass through each other.</summary>
+            public bool Crosses(Leg o)
+            {
+                if (Horizontal == o.Horizontal) return false;
+                var h = Horizontal ? this : o;
+                var v = Horizontal ? o : this;
+                return v.Left > h.Left + 0.5f && v.Left < h.Right - 0.5f && h.Top > v.Top + 0.5f && h.Top < v.Bottom - 0.5f;
+            }
+
+            /// <summary>Two vertical legs side by side, too close to tell apart.</summary>
+            public bool Crowds(Leg o)
+                => Vertical && o.Vertical && Math.Abs(Left - o.Left) < 6f && Top < o.Bottom - 1f && o.Top < Bottom - 1f;
         }
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Text;
 using DataverseProcessMapper.Models;
+using DataverseProcessMapper.Parsing;
 using DataverseProcessMapper.Rendering;
 
 namespace DataverseProcessMapper.Layout
@@ -129,7 +130,7 @@ namespace DataverseProcessMapper.Layout
             return s.Substring(0, lo);
         }
 
-        private static string Truncate(string s) => s.Length > 24 ? s.Substring(0, 24) : s;
+        private static string Truncate(string s) => DetailText.Head(s, 24);
 
         private static float Clamp(float v, float min, float max) => v < min ? min : (v > max ? max : v);
 

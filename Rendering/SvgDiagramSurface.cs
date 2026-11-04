@@ -149,10 +149,33 @@ namespace DataverseProcessMapper.Rendering
 
         private static string Escape(string s)
         {
-            return s.Replace("&", "&amp;")
+            return XmlChars(s).Replace("&", "&amp;")
                     .Replace("<", "&lt;")
                     .Replace(">", "&gt;")
                     .Replace("\"", "&quot;");
+        }
+
+        /// <summary>
+        /// Drops the characters XML 1.0 forbids, which no escape can represent:
+        /// control characters (a vertical tab survives JSON as \u000b), unpaired
+        /// surrogates and U+FFFE/U+FFFF. One of them in a step name would make
+        /// browsers, Visio and draw.io reject the whole file.
+        /// </summary>
+        internal static string XmlChars(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s ?? "";
+            var sb = new StringBuilder(s.Length);
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (char.IsHighSurrogate(c) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1]))
+                    sb.Append(c).Append(s[++i]); // a proper pair: keep both halves
+                else if (c == '\t' || c == '\n' || c == '\r'
+                         || (c >= '\u0020' && c <= '\uD7FF')
+                         || (c >= '\uE000' && c <= '\uFFFD'))
+                    sb.Append(c);
+            }
+            return sb.ToString();
         }
 
         public void Dispose()

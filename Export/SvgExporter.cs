@@ -48,6 +48,8 @@ namespace DataverseProcessMapper.Exporters
 
         private static string F(float v) => v.ToString("0.##", CultureInfo.InvariantCulture);
 
-        private static string E(string s) => string.IsNullOrEmpty(s) ? "" : WebUtility.HtmlEncode(s);
+        // XML-forbidden characters go first: HtmlEncode passes control characters through.
+        private static string E(string s)
+            => string.IsNullOrEmpty(s) ? "" : WebUtility.HtmlEncode(SvgDiagramSurface.XmlChars(s));
     }
 }

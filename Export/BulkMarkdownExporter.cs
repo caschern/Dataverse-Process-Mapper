@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -36,7 +37,9 @@ namespace DataverseProcessMapper.Exporters
             Action<string> progress)
         {
             var result = new BulkExportResult();
-            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // "index" is taken by the catalogue, written last: a process called
+            // Index would otherwise be overwritten by it.
+            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "index" };
             var entries = new List<Entry>();
 
             int i = 0;
@@ -47,8 +50,7 @@ namespace DataverseProcessMapper.Exporters
                 try
                 {
                     var map = ProcessMapBuilder.Build(item);
-                    var file = ExportNaming.UniqueName(usedNames,
-                        ExportNaming.SafeFileName(item.Name)) + ".md";
+                    var file = ExportNaming.UniqueName(usedNames, ExportNaming.SafeFileName(item.Name)) + ".md";
                     MarkdownExporter.Save(map, Path.Combine(folder, file));
 
                     var trigger = map.Graph.Nodes.FirstOrDefault(n => n.Kind == NodeKind.Trigger);
@@ -83,7 +85,7 @@ namespace DataverseProcessMapper.Exporters
             sb.AppendLine();
             sb.AppendLine("This catalogue lists " + entries.Count + " automated " +
                           (entries.Count == 1 ? "process" : "processes") +
-                          " documented on " + DateTime.Now.ToString("yyyy-MM-dd") +
+                          " documented on " + DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) +
                           ". Each has its own document describing every step, what each step runs " +
                           "after, and which steps run at the same time.");
             sb.AppendLine();
@@ -101,12 +103,12 @@ namespace DataverseProcessMapper.Exporters
             sb.AppendLine();
             foreach (var e in entries.OrderBy(x => x.Item.Name, StringComparer.OrdinalIgnoreCase))
             {
-                sb.AppendLine("### " + Clean(e.Item.Name));
+                sb.AppendLine("### " + MarkdownExporter.HeadingText(Clean(e.Item.Name)));
                 sb.AppendLine();
 
                 var facts = new List<string> { "a " + e.Item.CategoryLabel };
                 if (!string.IsNullOrEmpty(e.Item.PrimaryEntity))
-                    facts.Add("running against the `" + e.Item.PrimaryEntity + "` table");
+                    facts.Add("running against the " + MarkdownExporter.Code(e.Item.PrimaryEntity) + " table");
                 facts.Add("currently " + e.Item.StateLabel.ToLowerInvariant());
                 facts.Add("made up of " + e.Steps + " steps");
 
@@ -117,7 +119,7 @@ namespace DataverseProcessMapper.Exporters
                     sb.AppendLine("It has " + e.ParallelGroups + " group" +
                                   (e.ParallelGroups == 1 ? "" : "s") + " of steps that run at the same time.");
                 sb.AppendLine();
-                sb.AppendLine("Full documentation: [" + Clean(e.Item.Name) + "](" +
+                sb.AppendLine("Full documentation: [" + LinkText(e.Item.Name) + "](" +
                               Uri.EscapeDataString(e.File) + ")");
                 sb.AppendLine();
             }
@@ -156,5 +158,13 @@ namespace DataverseProcessMapper.Exporters
             s = s.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ').Trim();
             return s.Replace("|", "\\|").Replace("*", "\\*");
         }
+
+        /// <summary>
+        /// Link text ends at the first unescaped ']', so a name like "Fix ] for (v2"
+        /// would cut the link short. Backslashes are escaped first so a name's own
+        /// backslash cannot swallow the escape added after it.
+        /// </summary>
+        private static string LinkText(string s)
+            => Clean((s ?? "").Replace("\\", "\\\\")).Replace("[", "\\[").Replace("]", "\\]");
     }
 }
