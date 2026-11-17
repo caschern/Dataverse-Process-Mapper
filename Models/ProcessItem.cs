@@ -54,6 +54,48 @@ namespace DataverseProcessMapper.Models
         /// <summary>Localized label of the <c>scope</c> option set (e.g. "Organization").</summary>
         public string Scope { get; set; }
 
+        /// <summary>
+        /// The <c>workflowidunique</c> column: the id the Power Automate portal uses
+        /// in a flow's URL (it differs from <see cref="Id"/>). Null when not fetched.
+        /// </summary>
+        public Guid? WorkflowIdUnique { get; set; }
+
+        public bool IsManaged { get; set; }
+
+        public string Description { get; set; }
+
+        /// <summary>Classic workflow starts when a record is created.</summary>
+        public bool TriggerOnCreate { get; set; }
+
+        /// <summary>Classic workflow starts when a record is deleted.</summary>
+        public bool TriggerOnDelete { get; set; }
+
+        /// <summary>
+        /// The <c>triggeronupdateattributelist</c> column: comma-separated logical
+        /// names whose change starts the workflow. Empty or null = not on update.
+        /// </summary>
+        public string TriggerOnUpdateAttributes { get; set; }
+
+        /// <summary>Classic workflow can be run on demand.</summary>
+        public bool OnDemand { get; set; }
+
+        /// <summary>The <c>subprocess</c> column: the workflow can run as a child process.</summary>
+        public bool IsChild { get; set; }
+
+        /// <summary>The <c>mode</c> option set: 0 = Background, 1 = Real-time, -1 = unknown.</summary>
+        public int Mode { get; set; } = -1;
+
+        /// <summary>The <c>runas</c> option set: 0 = Owner, 1 = Calling user, -1 = unknown.</summary>
+        public int RunAs { get; set; } = -1;
+
+        /// <summary>
+        /// One-line description of what starts the process ("Dataverse: account –
+        /// Added", "Create, Delete · On demand"). Classic workflows get it from the
+        /// list columns; flows only once their definition has been read, so it is
+        /// null until then. It outlives the definition text (see DefinitionStore).
+        /// </summary>
+        public string TriggerSummary { get; set; }
+
         public bool IsModernFlow => Category == 5;
 
         public string CategoryLabel

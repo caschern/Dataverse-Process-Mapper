@@ -23,7 +23,9 @@
     <Company>Cristian Casas</Company>
     <Authors>Cristian Casas</Authors>
     <Product>Dataverse Process Mapper</Product>
-    <Version>1.0.33</Version>
+    <Version>1.0.34</Version>
+    <!-- Builds write /_/ instead of this machine's folders (which name the user) into the DLL. -->
+    <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
     <Description>Visualize Dataverse workflows and Power Automate flows as interactive, collapsible process maps with step details and PDF/HTML/SVG/PNG export.</Description>
   </PropertyGroup>
 
@@ -31,6 +33,13 @@
     <!-- The test project lives in a subfolder; keep it out of this assembly. -->
     <Compile Remove="Tests\**" />
     <None Remove="Tests\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Fluent UI icon path data, read by UI/IconFactory.cs under this fixed name. -->
+    <EmbeddedResource Include="UI\Icons\fluent-icons.txt" LogicalName="DataverseProcessMapper.UI.Icons.fluent-icons.txt" />
+    <!-- Shown in the About dialog (UI/AboutDialog.cs reads it under this fixed name). -->
+    <EmbeddedResource Include="THIRD-PARTY-NOTICES.md" LogicalName="DataverseProcessMapper.THIRD-PARTY-NOTICES.md" />
   </ItemGroup>
 
   <ItemGroup>

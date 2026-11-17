@@ -27,14 +27,21 @@ namespace DataverseProcessMapper.Rendering
         private static readonly Color DimEdgeColor = Color.FromArgb(214, 218, 224);
         private static readonly Color DimLabelColor = Color.FromArgb(196, 201, 208);
 
+        // Find matches: an amber ring outside the (blue) selection outline, so
+        // every match shows at a glance and the current one still stands out.
+        private static readonly Color MatchOutlineColor = Color.FromArgb(232, 160, 32);
+        private const float MatchOutlinePad = 6f;
+
         /// <param name="visible">
         /// The part of the diagram being painted, in diagram coordinates; anything
         /// wholly outside it is skipped. A pan exposes only a thin strip, so this
         /// keeps a repaint proportional to what is on screen rather than to the
         /// size of the map. Null draws everything (exports).
         /// </param>
+        /// <param name="matchIds">Nodes matched by the on-screen find; ignored unless interactive.</param>
         public static void Render(IDiagramSurface surface, ProcessGraph graph, SizeF canvas,
-            bool interactive = false, string highlightId = null, RectangleF? visible = null)
+            bool interactive = false, string highlightId = null, RectangleF? visible = null,
+            ICollection<string> matchIds = null)
         {
             if (Shows(visible, new RectangleF(0, 0, canvas.Width, DiagramStyle.Margin + 32f)))
                 DrawTitle(surface, graph, canvas);
@@ -68,9 +75,13 @@ namespace DataverseProcessMapper.Rendering
                 if (Shows(visible, RectangleF.Inflate(node.Bounds, 4f, 4f)))
                     DrawNode(surface, node);
 
-            // Expand/collapse glyphs only make sense on screen, not in exports.
+            // Find highlights and expand/collapse glyphs only make sense on
+            // screen, not in exports; glyphs go last so a ring never covers one.
             if (interactive)
+            {
+                DrawMatchOutlines(surface, graph, matchIds, visible);
                 DrawToggleGlyphs(surface, graph, visible);
+            }
 
             // If two label chips collide, slide the later one to the RIGHT along
             // its lane — pushing down would leave the node-free gap band and
@@ -134,6 +145,19 @@ namespace DataverseProcessMapper.Rendering
             float dx = Math.Abs(pt.X - (r.X + r.Width / 2f)) / (r.Width / 2f);
             float dy = Math.Abs(pt.Y - (r.Y + r.Height / 2f)) / (r.Height / 2f);
             return dx + dy <= 1f;
+        }
+
+        private static void DrawMatchOutlines(IDiagramSurface s, ProcessGraph graph,
+            ICollection<string> matchIds, RectangleF? visible)
+        {
+            if (matchIds == null || matchIds.Count == 0) return;
+            foreach (var n in graph.Nodes)
+            {
+                if (!matchIds.Contains(n.Id)) continue;
+                var r = RectangleF.Inflate(n.Bounds, MatchOutlinePad, MatchOutlinePad);
+                if (!Shows(visible, RectangleF.Inflate(r, 2f, 2f))) continue;
+                s.DrawRoundedRect(MatchOutlineColor, 2f, r, DiagramStyle.CornerRadius + MatchOutlinePad);
+            }
         }
 
         private static void DrawToggleGlyphs(IDiagramSurface s, ProcessGraph graph, RectangleF? visible)

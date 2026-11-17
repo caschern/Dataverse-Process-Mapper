@@ -68,7 +68,10 @@ namespace DataverseProcessMapper.Parsing
                 return graph;
             }
 
-            var start = graph.AddNode("Start", NodeKind.Start, NodeShape.Stadium, id: "__start");
+            // What starts the workflow comes from its columns, not the XAML.
+            var start = graph.AddNode("Start", NodeKind.Start, NodeShape.Stadium, id: "__start",
+                subtitle: TriggerSummary.ClassicSubtitle(item));
+            start.Details = TriggerSummary.ClassicStartDetails(item);
             var entry = new List<Exit> { new Exit(start.Id) };
 
             var designerBody = root.DescendantsAndSelf().FirstOrDefault(IsDesignerWorkflow);

@@ -70,6 +70,12 @@ namespace DataverseProcessMapper.Exporters
 
             sb.AppendLine("**" + Clean(graph.Title) + "** is " + string.Join(", ", facts) + ".");
             sb.AppendLine();
+            var trigger = Parsing.TriggerSummary.ForItem(item);
+            if (trigger != null)
+            {
+                sb.AppendLine("Trigger: " + Clean(trigger) + ".");
+                sb.AppendLine();
+            }
             // Invariant: under a Thai or Hijri calendar the year would not be the Gregorian one.
             var today = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             if (item?.ModifiedOn != null)

@@ -12,20 +12,47 @@ namespace DataverseProcessMapper.UI
     /// A scrollable, zoomable panel that previews a <see cref="ProcessMap"/>
     /// using the GDI+ surface. Ctrl+MouseWheel zooms.
     /// </summary>
-    public class DiagramPanel : Panel
+    public partial class DiagramPanel : Panel
     {
+        // How the zoom follows the panel's size: re-fit on resize until the user zooms manually.
+        private enum FitMode { None, Width, Whole }
+
         private ProcessMap _map;
         private float _zoom = 1f;
-        private bool _autoFit = true;   // re-fit on resize until the user zooms manually
+        private FitMode _fit = FitMode.Width;
         private bool _fitting;          // guards against resize/scrollbar feedback loops
+        private int _zoomRaised;        // ZoomChanged count, so commands can raise it at least once
         private string _selectedId;
         private HashSet<string> _viewParents = new HashSet<string>();
+
+        // Find: matches are node ids of the full graph, so they survive collapse,
+        // expand and re-layout; only a new map (or a new search) replaces them.
+        private List<string> _matches = new List<string>();
+        private int _matchIndex = -1;
+        private string _findTerm;
+        private bool _findDetails;
+        private HashSet<string> _matchOutline = new HashSet<string>();
+
+        // Reading order of the full graph, per map and layout mode (laying out a
+        // large map again on every keystroke of an incremental search is too slow).
+        private Dictionary<string, int> _readingOrder;
+        private ProcessMap _readingOrderMap;
+        private LayoutMode _readingOrderMode;
 
         /// <summary>Raised when the user clicks a node (null when the selection is cleared).</summary>
         public event Action<ProcessNode> NodeSelected;
 
         /// <summary>Raised when the user enters or leaves full-screen mode.</summary>
         public event Action<bool> FullScreenChanged;
+
+        /// <summary>Raised after <see cref="SetMap"/>, including when the map is cleared.</summary>
+        public event Action MapChanged;
+
+        /// <summary>Raised on any zoom change: buttons, Ctrl+wheel, fit, actual size, a new map.</summary>
+        public event Action ZoomChanged;
+
+        /// <summary>Raised when the find match set or the current match changes.</summary>
+        public event Action FindChanged;
 
         /// <summary>True while the process list is hidden to give the map the full width.</summary>
         public bool IsFullScreen { get; private set; }
@@ -61,27 +88,53 @@ namespace DataverseProcessMapper.UI
         private const float MinZoom = 0.05f;
         private const float MaxZoom = 3f;
 
+        /// <summary>The current zoom; 1 = 100 %.</summary>
         public float Zoom
         {
             get => _zoom;
-            set
+            private set
             {
-                _zoom = value < MinZoom ? MinZoom : (value > MaxZoom ? MaxZoom : value);
+                float zoom = value < MinZoom ? MinZoom : (value > MaxZoom ? MaxZoom : value);
+                bool changed = zoom != _zoom;
+                _zoom = zoom;
                 UpdateScrollSize();
                 Invalidate();
+                if (changed) RaiseZoomChanged();
             }
+        }
+
+        private void RaiseZoomChanged()
+        {
+            _zoomRaised++;
+            ZoomChanged?.Invoke();
+        }
+
+        // A fit or a new map that happens to land on the same zoom still tells
+        // listeners, so a label can never be left showing a stale value.
+        private void EnsureZoomRaised(int before)
+        {
+            if (_zoomRaised == before) RaiseZoomChanged();
         }
 
         public void SetMap(ProcessMap map)
         {
+            int before = _zoomRaised;
             _map = map;
             _selectedId = null;
+            bool hadFind = ClearFindState();
+            _readingOrder = null;
+            _readingOrderMap = null;
             NodeSelected?.Invoke(null);
             RebuildViewCaches();
             AutoScrollPosition = new Point(0, 0);
-            if (_autoFit) FitCore();
+            if (_fit != FitMode.None) FitCore();
             else UpdateScrollSize();
             Invalidate();
+            EnsureZoomRaised(before);
+            // Only once the new map is fully in place: a listener that searches
+            // again from here must not have its result undone by the rest of SetMap.
+            if (hadFind) FindChanged?.Invoke();
+            MapChanged?.Invoke();
         }
 
         private void RebuildViewCaches()
@@ -94,10 +147,26 @@ namespace DataverseProcessMapper.UI
 
         public ProcessMap Map => _map;
 
-        public void ZoomToFit()
+        /// <summary>Fits the map's width (the panel scrolls vertically for the rest), never above 100 %.</summary>
+        public void ZoomToFit() => FitAndKeep(FitMode.Width);
+
+        /// <summary>Fits the whole map, width and height, never above 100 %.</summary>
+        public void FitWholeMap() => FitAndKeep(FitMode.Whole);
+
+        private void FitAndKeep(FitMode mode)
         {
-            _autoFit = true;
+            int before = _zoomRaised;
+            _fit = mode;
             FitCore();
+            EnsureZoomRaised(before);
+        }
+
+        /// <summary>100 %, keeping the centre of the view where it is.</summary>
+        public void ActualSize()
+        {
+            int before = _zoomRaised;
+            ZoomTo(1f, new Point(ClientSize.Width / 2, ClientSize.Height / 2));
+            EnsureZoomRaised(before);
         }
 
         private void FitCore()
@@ -108,9 +177,12 @@ namespace DataverseProcessMapper.UI
             _fitting = true;
             try
             {
-                // Fit to width; the panel scrolls vertically for the rest.
-                float fx = (ClientSize.Width - 20) / _map.CanvasSize.Width;
-                Zoom = System.Math.Min(fx, 1f);
+                float zoom = (ClientSize.Width - 20) / _map.CanvasSize.Width;
+                // The whole map may zoom out below the width fit, but neither fit
+                // enlarges a small map past its natural size.
+                if (_fit == FitMode.Whole && _map.CanvasSize.Height >= 1)
+                    zoom = Math.Min(zoom, (ClientSize.Height - 20) / _map.CanvasSize.Height);
+                Zoom = Math.Min(zoom, 1f);
             }
             finally
             {
@@ -123,7 +195,7 @@ namespace DataverseProcessMapper.UI
             base.OnResize(e);
             // Keep the diagram fitted while the user drags the splitter or
             // resizes the window, unless they have zoomed manually.
-            if (_autoFit && !_fitting && _map != null)
+            if (_fit != FitMode.None && !_fitting && _map != null)
                 FitCore();
         }
 
@@ -166,7 +238,7 @@ namespace DataverseProcessMapper.UI
 
             using (var surface = new GdiDiagramSurface(g))
                 DiagramRenderer.Render(surface, _map.ViewGraph, _map.CanvasSize,
-                    interactive: true, highlightId: _selectedId, visible: visible);
+                    interactive: true, highlightId: _selectedId, visible: visible, matchIds: _matchOutline);
 
             // Selection highlight, drawn in diagram coordinates on top of everything.
             if (_selectedId != null)
@@ -248,8 +320,15 @@ namespace DataverseProcessMapper.UI
 
             var node = HitTest(e.Location);
             _selectedId = node?.Id;
+
+            // A clicked match becomes the current one, so "n of m" follows the click.
+            int match = node != null ? _matches.IndexOf(node.Id) : -1;
+            bool matchMoved = match >= 0 && match != _matchIndex;
+            if (matchMoved) _matchIndex = match;
+
             Invalidate();
             NodeSelected?.Invoke(node);
+            if (matchMoved) FindChanged?.Invoke();
         }
 
         private void ToggleCollapse(ProcessNode container)
@@ -290,6 +369,7 @@ namespace DataverseProcessMapper.UI
         {
             ProcessMapBuilder.RefreshView(_map);
             RebuildViewCaches();
+            UpdateMatchOutline();
 
             // The selected node may have been hidden by the change.
             if (_selectedId != null && _map.ViewGraph[_selectedId] == null)
@@ -298,7 +378,7 @@ namespace DataverseProcessMapper.UI
                 NodeSelected?.Invoke(null);
             }
 
-            if (_autoFit) FitCore();
+            if (_fit != FitMode.None) FitCore();
             else UpdateScrollSize();
             Invalidate();
         }
@@ -352,11 +432,14 @@ namespace DataverseProcessMapper.UI
         }
 
         /// <summary>Zooms by a factor keeping the given client point stationary.</summary>
-        private void ZoomAt(float factor, Point clientAnchor)
+        private void ZoomAt(float factor, Point clientAnchor) => ZoomTo(_zoom * factor, clientAnchor);
+
+        /// <summary>Zooms to a value keeping the given client point stationary.</summary>
+        private void ZoomTo(float zoom, Point clientAnchor)
         {
-            _autoFit = false; // manual zoom takes over until the next Zoom to Fit
+            _fit = FitMode.None; // manual zoom takes over until the next fit
             var anchor = ToDiagram(clientAnchor);
-            Zoom = _zoom * factor;
+            Zoom = zoom;
             AutoScrollPosition = new Point(
                 (int)(anchor.X * _zoom - clientAnchor.X),
                 (int)(anchor.Y * _zoom - clientAnchor.Y));
@@ -367,30 +450,128 @@ namespace DataverseProcessMapper.UI
         public void ZoomStep(float factor)
             => ZoomAt(factor, new Point(ClientSize.Width / 2, ClientSize.Height / 2));
 
+        // ---------- find ----------
+
+        /// <summary>How many nodes the current search matched (0 when there is none).</summary>
+        public int MatchCount => _matches.Count;
+
+        /// <summary>The current match's position in <see cref="MatchCount"/>; -1 when none.</summary>
+        public int MatchIndex => _matchIndex;
+
+        /// <summary>
+        /// Searches every step of the map, hidden ones included, case-insensitively
+        /// on label and subtitle (and, with <paramref name="includeDetails"/>, on
+        /// detail names and values). Matches are ordered as read: top to bottom,
+        /// then left to right. The first is selected, revealed and centred.
+        /// A null or empty term clears the search. Returns the match count.
+        /// </summary>
+        public int Find(string term, bool includeDetails)
+        {
+            if (_map == null || string.IsNullOrWhiteSpace(term))
+            {
+                ClearFind();
+                return 0;
+            }
+            term = term.Trim();
+
+            var order = ReadingOrder();
+            _matches = _map.Graph.Nodes
+                .Where(n => IsMatch(n, term, includeDetails))
+                .OrderBy(n => order.TryGetValue(n.Id, out var rank) ? rank : int.MaxValue)
+                .Select(n => n.Id)
+                .ToList();
+            _findTerm = term;
+            _findDetails = includeDetails;
+            _matchIndex = _matches.Count > 0 ? 0 : -1;
+
+            if (_matchIndex >= 0) RevealAndSelect(_matches[0]);
+            UpdateMatchOutline();
+            Invalidate();
+            FindChanged?.Invoke();
+            return _matches.Count;
+        }
+
+        /// <summary>Moves to the next match, wrapping; false when nothing matches.</summary>
+        public bool FindNext() => StepMatch(1);
+
+        /// <summary>Moves to the previous match, wrapping; false when nothing matches.</summary>
+        public bool FindPrevious() => StepMatch(-1);
+
         /// <summary>
         /// Selects and centers the next node whose label contains the term,
         /// cycling through matches and expanding collapsed ancestors as needed.
-        /// Returns false when nothing matches.
+        /// Returns false when nothing matches. Kept for the Enter-to-find box:
+        /// the same term again moves on, a new term starts a new search.
         /// </summary>
         public bool FindNext(string term)
         {
             if (_map == null || string.IsNullOrWhiteSpace(term)) return false;
-            term = term.Trim();
+            if (_matches.Count > 0 && !_findDetails &&
+                string.Equals(_findTerm, term.Trim(), StringComparison.OrdinalIgnoreCase))
+                return FindNext();
+            return Find(term, false) > 0;
+        }
 
-            var matches = _map.Graph.Nodes
-                .Where(n => (n.Label ?? "").IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0)
-                .ToList();
-            if (matches.Count == 0) return false;
+        /// <summary>Forgets the search and its highlights; the selection stays.</summary>
+        public void ClearFind()
+        {
+            if (!ClearFindState()) return;
+            Invalidate();
+            FindChanged?.Invoke();
+        }
 
-            int start = 0;
-            if (_selectedId != null)
-            {
-                int current = matches.FindIndex(n => n.Id == _selectedId);
-                if (current >= 0) start = (current + 1) % matches.Count;
-            }
-            var target = matches[start];
+        /// <summary>Resets the search without raising anything; true when there was one.</summary>
+        private bool ClearFindState()
+        {
+            bool had = _findTerm != null || _matches.Count > 0;
+            _matches = new List<string>();
+            _matchIndex = -1;
+            _findTerm = null;
+            _findDetails = false;
+            _matchOutline = new HashSet<string>();
+            return had;
+        }
 
-            // A match hidden inside collapsed containers gets revealed.
+        private bool StepMatch(int direction)
+        {
+            if (_map == null || _matches.Count == 0) return false;
+
+            // A match the user clicked on is where the next step starts from.
+            int current = _selectedId != null ? _matches.IndexOf(_selectedId) : -1;
+            if (current < 0) current = _matchIndex;
+
+            int count = _matches.Count;
+            _matchIndex = current < 0
+                ? (direction > 0 ? 0 : count - 1)
+                : ((current + direction) % count + count) % count;
+
+            RevealAndSelect(_matches[_matchIndex]);
+            Invalidate();
+            FindChanged?.Invoke();
+            return true;
+        }
+
+        private static bool IsMatch(ProcessNode node, string term, bool includeDetails)
+        {
+            if (Contains(node.Label, term) || Contains(node.Subtitle, term)) return true;
+            if (!includeDetails || node.Details == null) return false;
+            foreach (var d in node.Details)
+                if (Contains(d.Key, term) || Contains(d.Value, term)) return true;
+            return false;
+        }
+
+        private static bool Contains(string text, string term)
+            => text != null && text.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0;
+
+        /// <summary>
+        /// Selects and centres a node of the full graph, expanding its collapsed
+        /// ancestors first when it is hidden. False when it cannot be shown.
+        /// </summary>
+        private bool RevealAndSelect(string id)
+        {
+            var target = _map.Graph[id];
+            if (target == null) return false;
+
             bool expanded = false;
             var cur = target.ParentId;
             int guard = 0;
@@ -401,14 +582,9 @@ namespace DataverseProcessMapper.UI
                 if (parent.Collapsed) { parent.Collapsed = false; expanded = true; }
                 cur = parent.ParentId;
             }
-            if (expanded)
-            {
-                ProcessMapBuilder.RefreshView(_map);
-                RebuildViewCaches();
-                if (_autoFit) FitCore(); else UpdateScrollSize();
-            }
+            if (expanded) RefreshStructure();
 
-            var visible = _map.ViewGraph[target.Id];
+            var visible = _map.ViewGraph[id];
             if (visible == null) return false;
 
             _selectedId = visible.Id;
@@ -416,6 +592,101 @@ namespace DataverseProcessMapper.UI
             CenterOn(visible);
             Invalidate();
             return true;
+        }
+
+        /// <summary>
+        /// The boxes drawn with the match outline: each match itself when shown,
+        /// otherwise the collapsed container hiding it, so a hidden match is
+        /// still visible as "somewhere in here".
+        /// </summary>
+        private void UpdateMatchOutline()
+        {
+            var outline = new HashSet<string>();
+            if (_map != null)
+            {
+                foreach (var id in _matches)
+                {
+                    string shown = id;
+                    var cur = _map.Graph[id]?.ParentId;
+                    int guard = 0;
+                    while (cur != null && guard++ < _map.Graph.Nodes.Count)
+                    {
+                        var parent = _map.Graph[cur];
+                        if (parent == null) break;
+                        if (parent.Collapsed) shown = parent.Id; // the outermost collapse wins
+                        cur = parent.ParentId;
+                    }
+                    if (_map.ViewGraph?[shown] != null) outline.Add(shown);
+                }
+            }
+            _matchOutline = outline;
+        }
+
+        /// <summary>
+        /// Each node's position in reading order (rows top to bottom, left to
+        /// right within a row) on the fully expanded map, so the order does not
+        /// depend on what happens to be collapsed.
+        /// </summary>
+        private Dictionary<string, int> ReadingOrder()
+        {
+            if (_readingOrder != null && _readingOrderMap == _map && _readingOrderMode == _map.Mode)
+                return _readingOrder;
+
+            var laidOut = _map.ViewGraph != null && _map.ViewGraph.Nodes.Count == _map.Graph.Nodes.Count
+                ? _map.ViewGraph
+                : ExpandedLayout(_map);
+
+            // Rows are runs of vertically overlapping boxes: a row's boxes may be
+            // top-aligned or centred, and either way they overlap, while the next
+            // row starts below a gap.
+            var nodes = laidOut.Nodes.OrderBy(n => n.Bounds.Top).ThenBy(n => n.Bounds.Left).ToList();
+            var order = new Dictionary<string, int>();
+            int i = 0;
+            while (i < nodes.Count)
+            {
+                float bottom = nodes[i].Bounds.Bottom;
+                int j = i + 1;
+                while (j < nodes.Count && nodes[j].Bounds.Top < bottom)
+                {
+                    bottom = Math.Max(bottom, nodes[j].Bounds.Bottom);
+                    j++;
+                }
+                foreach (var n in nodes.GetRange(i, j - i).OrderBy(n => n.Bounds.Left).ThenBy(n => n.Bounds.Top))
+                    order[n.Id] = order.Count;
+                i = j;
+            }
+
+            _readingOrder = order;
+            _readingOrderMap = _map;
+            _readingOrderMode = _map.Mode;
+            return order;
+        }
+
+        /// <summary>
+        /// Lays out a copy of the map with everything expanded. A copy, because the
+        /// on-screen nodes are shared with the view and must keep their positions.
+        /// </summary>
+        private static ProcessGraph ExpandedLayout(ProcessMap map)
+        {
+            var full = map.Graph;
+            var copy = new ProcessGraph { Title = full.Title, Subtitle = full.Subtitle };
+            foreach (var n in full.Nodes)
+                copy.AddExisting(new ProcessNode
+                {
+                    Id = n.Id,
+                    Label = n.Label,
+                    Subtitle = n.Subtitle,
+                    Kind = n.Kind,
+                    Shape = n.Shape,
+                    ParentId = n.ParentId,
+                    Details = n.Details
+                });
+            foreach (var e in full.Edges)
+                copy.AddEdge(e.FromId, e.ToId, e.Label, e.Dashed);
+
+            var expanded = new ProcessMap { Graph = copy, Source = map.Source, Mode = map.Mode };
+            ProcessMapBuilder.RefreshView(expanded);
+            return expanded.ViewGraph;
         }
 
         private void CenterOn(ProcessNode node)

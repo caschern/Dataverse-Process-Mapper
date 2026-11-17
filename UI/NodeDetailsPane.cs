@@ -30,6 +30,9 @@ namespace DataverseProcessMapper.UI
         /// <summary>Raised when the user asks to open a fetchXml in FetchXML Builder.</summary>
         public event Action<string> FetchXmlRequested;
 
+        /// <summary>The clipboard and message boxes; tests replace them.</summary>
+        public DesktopServices Services { get; set; } = DesktopServices.Default;
+
         public NodeDetailsPane()
         {
             BackColor = Color.White;
@@ -81,7 +84,17 @@ namespace DataverseProcessMapper.UI
             _copyMenuItem = new ToolStripMenuItem("Copy value", null, (s, e) =>
             {
                 var value = CurrentValue();
-                if (!string.IsNullOrEmpty(value)) Clipboard.SetText(value);
+                if (string.IsNullOrEmpty(value)) return;
+                var desktop = Services ?? DesktopServices.Default;
+                try
+                {
+                    desktop.SetClipboardText(value);
+                }
+                catch (System.Runtime.InteropServices.ExternalException)
+                {
+                    desktop.ShowMessage(this, "Could not copy to the clipboard: another program is using it. Try again.",
+                        "Copy", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
             });
             _fxbMenuItem = new ToolStripMenuItem("Open in FetchXML Builder", null, (s, e) =>
             {

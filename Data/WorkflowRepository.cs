@@ -36,7 +36,12 @@ namespace DataverseProcessMapper.Data
                 ColumnSet = new ColumnSet(
                     "workflowid", "name", "category", "type",
                     "primaryentity", "statecode", "modifiedon",
-                    "createdon", "createdby", "modifiedby", "ownerid", "scope"),
+                    "createdon", "createdby", "modifiedby", "ownerid", "scope",
+                    // Links, the solution filter and the classic trigger summary —
+                    // all small columns, so no definition has to be read for them.
+                    "workflowidunique", "ismanaged", "description",
+                    "triggeroncreate", "triggerondelete", "triggeronupdateattributelist",
+                    "ondemand", "subprocess", "mode", "runas"),
                 Criteria = new FilterExpression(LogicalOperator.And),
                 PageInfo = new PagingInfo { Count = 500, PageNumber = 1 },
                 Orders = { new OrderExpression("name", OrderType.Ascending) }
@@ -102,7 +107,7 @@ namespace DataverseProcessMapper.Data
 
         private static ProcessItem Map(Entity e)
         {
-            return new ProcessItem
+            var item = new ProcessItem
             {
                 Id = e.Id,
                 Name = e.GetAttributeValue<string>("name"),
@@ -118,8 +123,23 @@ namespace DataverseProcessMapper.Data
                 CreatedBy = GetLookupName(e, "createdby"),
                 ModifiedBy = GetLookupName(e, "modifiedby"),
                 Owner = GetLookupName(e, "ownerid"),
-                Scope = GetScopeLabel(e)
+                Scope = GetScopeLabel(e),
+                WorkflowIdUnique = e.GetAttributeValue<Guid?>("workflowidunique"),
+                IsManaged = e.GetAttributeValue<bool>("ismanaged"),
+                Description = e.GetAttributeValue<string>("description"),
+                TriggerOnCreate = e.GetAttributeValue<bool>("triggeroncreate"),
+                TriggerOnDelete = e.GetAttributeValue<bool>("triggerondelete"),
+                TriggerOnUpdateAttributes = e.GetAttributeValue<string>("triggeronupdateattributelist"),
+                OnDemand = e.GetAttributeValue<bool>("ondemand"),
+                IsChild = e.GetAttributeValue<bool>("subprocess"),
+                Mode = GetOptionSet(e, "mode"),
+                RunAs = GetOptionSet(e, "runas")
             };
+
+            // A flow's trigger is in its definition, read later (DefinitionStore).
+            if (item.Category == CategoryClassicWorkflow)
+                item.TriggerSummary = Parsing.TriggerSummary.ForClassic(item);
+            return item;
         }
 
         private static int GetOptionSet(Entity e, string attr)

@@ -9,3 +9,4 @@ obj/
 *.user
 *.nupkg
 TestResults/
+Tests/

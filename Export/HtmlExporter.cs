@@ -67,6 +67,8 @@ namespace DataverseProcessMapper.Exporters
             sb.AppendLine("<table class=\"meta\"><tbody>");
             Meta(sb, "Type", item?.CategoryLabel);
             Meta(sb, "Primary table", string.IsNullOrEmpty(item?.PrimaryEntity) ? "—" : item.PrimaryEntity);
+            var trigger = Parsing.TriggerSummary.ForItem(item);
+            if (trigger != null) Meta(sb, "Trigger", trigger);
             Meta(sb, "Status", item?.StateLabel);
             Meta(sb, "Steps", map.Graph.StepCount.ToString());
             Meta(sb, "Generated", DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
