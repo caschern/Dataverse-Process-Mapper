@@ -23,7 +23,7 @@
     <Company>Cristian Casas</Company>
     <Authors>Cristian Casas</Authors>
     <Product>Dataverse Process Mapper</Product>
-    <Version>1.0.34</Version>
+    <Version>1.0.35</Version>
     <!-- Builds write /_/ instead of this machine's folders (which name the user) into the DLL. -->
     <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
     <Description>Visualize Dataverse workflows and Power Automate flows as interactive, collapsible process maps with step details and PDF/HTML/SVG/PNG export.</Description>
